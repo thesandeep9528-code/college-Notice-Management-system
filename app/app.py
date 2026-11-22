@@ -80,13 +80,42 @@ st.title(f"AI College Notice – {role.capitalize()} Dashboard")
 # -------------------------------------------------------------------
 @require_role(["student"])
 def student_dashboard():
-    st.subheader("Pending Notices")
-    pending = get_notices_by_status("pending")
-    if pending:
-        for n in pending:
-            st.markdown(f"- **{n['title']}** (Dept: {n['department']}, Semester: {n['semester']})")
+    st.subheader("Approved Notices")
+    # Fetch approved notices
+    approved = get_notices_by_status("approved")
+    # Search UI
+    search_term = st.text_input("Search notices (title/description)")
+    categories = sorted({n["category"] for n in approved if n.get("category")})
+    selected_category = st.selectbox("Filter by category", ["All"] + categories)
+    # Filter logic
+    filtered = []
+    for n in approved:
+        if selected_category != "All" and n.get("category") != selected_category:
+            continue
+        if search_term:
+            if search_term.lower() not in (n.get("title") or "").lower() and \
+               search_term.lower() not in (n.get("description") or "").lower():
+                continue
+        filtered.append(n)
+    if not filtered:
+        st.info("No notices match the criteria.")
     else:
-        st.info("No pending notices.")
+        for n in filtered:
+            st.markdown(f"**{n['title']}** (Dept: {n.get('department','')}, Semester: {n.get('semester','')})")
+            if n.get("description"):
+                st.caption(n["description"])
+            st.write("Category:", n.get("category", "-"))
+            st.markdown("---")
+    # RAG Q&A
+    st.subheader("Ask a question about the notices")
+    with st.form(key="question_form"):
+        question = st.text_area("Your question")
+        submit_q = st.form_submit_button("Get Answer")
+        if submit_q and question.strip():
+            with st.spinner("Thinking..."):
+                answer = answer_question(question)
+            st.markdown(f"**Answer:** {answer}")
+
 
 # -------------------------------------------------------------------
 # Faculty dashboard – can create a new notice (upload later)
