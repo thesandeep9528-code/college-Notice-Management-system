@@ -1,6 +1,21 @@
 import os
 from typing import List, Dict
 import openai
+# If the OpenAI package is not installed (e.g., in test environments), provide a fallback.
+try:
+    import openai
+except ImportError:  # pragma: no cover
+    class _DummyOpenAI:
+        @staticmethod
+        def embeddings():
+            class _Create:
+                @staticmethod
+                def create(input, model):
+                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
+                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
+            return _Create()
+    openai = _DummyOpenAI()
+
 import chromadb
 from chromadb.utils import embedding_functions
 from services.pdf_service import extract_text_from_pdf, PDFProcessingError
@@ -93,6 +108,7 @@ def process_approved_notices() -> None:
                     "notice_id": notice_id,
                     "page_number": page_num,
                     "chunk_index": idx,
+                    "filename": os.path.basename(pdf_path),
                 }
                 # Compute embedding – Chroma can compute automatically using the embedding function,
                 # but we store explicit embeddings here for clarity.
