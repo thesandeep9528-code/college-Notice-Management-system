@@ -58,6 +58,8 @@ def delete_notice(notice_id: int) -> None:
     finally:
         conn.close()
 
+
+def add_user(email: str, password: str, role: str, active: bool = True) -> int:
     """Create a new user and return its generated id.
 
     ``active`` indicates whether the account is enabled. Defaults to ``True``.
@@ -80,32 +82,9 @@ def delete_notice(notice_id: int) -> None:
     finally:
         conn.close()
 
-    """Create a new user and return its generated id.
-
-    The password is hashed before storage using the same PBKDF2 utility.
-    """
-    pwd_hash = hash_password(password)
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO users (email, password_hash, role)
-                VALUES (%s, %s, %s)
-                RETURNING id;
-                """,
-                (email, pwd_hash, role),
-            )
-            user_id = cur.fetchone()[0]
-        conn.commit()
-        return user_id
-    finally:
-        conn.close()
-
 
 def get_user_by_email(email: str):
-    """Return a user row (as a dict) for the given email or ``None``.
-    """
+    """Return a user row (as a dict) for the given email or ``None``."""
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -138,50 +117,9 @@ def update_notice(notice_id: int, **fields) -> None:
     finally:
         conn.close()
 
+
 def add_notice(
     title: str,
-    description: str = "",
-    category: str = "",
-    department: str = "",
-    semester: str = "",
-    uploaded_by: int = None,
-    file_path: str = "",
-    status: str = "pending",
-    deadline: str = None,
-) -> int:
-    """Insert a new notice record and return its id.
-
-    ``deadline`` is optional – if supplied it should be an ISO‑8601 string that
-    PostgreSQL can cast to ``timestamp with time zone``. The column currently does
-    not exist; the migration logic adds it if missing (see ``database/migrate.py``).
-    """
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO notices (title, description, category, department, semester,
-                                     uploaded_by, file_path, status, deadline)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id;
-                """,
-                (
-                    title,
-                    description,
-                    category,
-                    department,
-                    semester,
-                    uploaded_by,
-                    file_path,
-                    status,
-                    deadline,
-                ),
-            )
-            notice_id = cur.fetchone()[0]
-        conn.commit()
-        return notice_id
-    finally:
-        conn.close()
     description: str = "",
     category: str = "",
     department: str = "",
@@ -267,7 +205,8 @@ def get_notices_by_user(user_id: int):
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
-                "SELECT * FROM notices WHERE uploaded_by = %s ORDER BY created_at DESC;", (user_id,)
+                "SELECT * FROM notices WHERE uploaded_by = %s ORDER BY created_at DESC;",
+                (user_id,)
             )
             rows = cur.fetchall()
             return [dict(r) for r in rows]
