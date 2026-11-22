@@ -1,0 +1,16 @@
+{
+  "samples": [
+    {
+      "question": "When is the final exam for CS101?",
+      "expected_answer": "The final exam for CS101 is on 2023-12-15.",
+      "expected_notice_id": 12,
+      "expected_page_number": 3
+    },
+    {
+      "question": "What scholarship is available for engineering students?",
+      "expected_answer": "The Engineering Scholarship provides $2000 to eligible students.",
+      "expected_notice_id": 5,
+      "expected_page_number": 1
+    }
+  ]
+}
