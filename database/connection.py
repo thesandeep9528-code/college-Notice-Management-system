@@ -20,6 +20,13 @@ def init_db():
     This function is idempotent – running it multiple times is safe.
     """
     conn = get_connection()
+    # Ensure the notices table has a deadline column (optional)
+    with conn.cursor() as cur:
+        cur.execute("""
+            ALTER TABLE notices
+            ADD COLUMN IF NOT EXISTS deadline TIMESTAMP WITH TIME ZONE;
+        """)
+    conn.commit()
     try:
         with conn.cursor() as cur:
             # Users table

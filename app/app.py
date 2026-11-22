@@ -1,11 +1,12 @@
 import os
 import streamlit as st
-from database.connection import init_db
+from database.connection import init_db, get_connection
 from database.queries import (
     add_user,
     get_user_by_email,
     add_notice,
     get_notices_by_status,
+    update_notice_status,
 )
 from database.auth import verify_password
 from database.seed_admin import seed_admin
@@ -123,6 +124,29 @@ def faculty_dashboard():
 # -------------------------------------------------------------------
 @require_role(["admin"])
 def admin_dashboard():
+    st.subheader("All Notices")
+    # Fetch all notices regardless of status
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM notices ORDER BY created_at DESC;")
+            all_notices = [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    for n in all_notices:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**{n['title']}** (Status: {n['status']})")
+        with col2:
+            if n['status'] == 'pending':
+                if st.button(f"Approve {n['id']}", key=f"ap_{n['id']}"):
+                    update_notice_status(n['id'], 'approved')
+                    st.success(f"Notice {n['id']} approved")
+                    st.experimental_rerun()
+                if st.button(f"Reject {n['id']}", key=f"re_{n['id']}"):
+                    update_notice_status(n['id'], 'rejected')
+                    st.success(f"Notice {n['id']} rejected")
+                    st.experimental_rerun()
     st.subheader("All Notices")
     all_notices = get_notices_by_status("pending") + get_notices_by_status("approved") + get_notices_by_status("rejected")
     for n in all_notices:
