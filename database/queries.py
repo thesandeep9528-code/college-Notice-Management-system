@@ -1,4 +1,7 @@
 import os
+import hashlib
+from services.sqlite_helper import check_duplicate_hash, insert_notice_intel
+
 import psycopg2
 from .connection import get_connection
 from .auth import hash_password, verify_password
