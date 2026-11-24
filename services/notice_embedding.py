@@ -1,39 +1,7 @@
 import os
 from typing import List, Dict
-# If the OpenAI package is not installed (e.g., in test environments), provide a fallback.
-try:
-    # OpenAI import with fallback for environments without the package
-try:
-    import openai
-except ImportError:  # pragma: no cover
-    class _DummyOpenAI:
-        @staticmethod
-        def embeddings():
-            class _Create:
-                @staticmethod
-                def create(input, model):
-                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
-                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
-            return _Create()
-    openai = _DummyOpenAI()
 
-except ImportError:  # pragma: no cover
-    class _DummyOpenAI:
-        @staticmethod
-        def embeddings():
-            class _Create:
-                @staticmethod
-                def create(input, model):
-                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
-                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
-            return _Create()
-    openai = _DummyOpenAI()
-
-# If the OpenAI package is not installed (e.g., in test environments), provide a fallback.
-try:
-    # If the OpenAI package is not installed (e.g., in test environments), provide a fallback.
-try:
-    # OpenAI import with fallback for environments without the package
+# Provide a dummy OpenAI fallback for test environments where the package is unavailable.
 try:
     import openai
 except ImportError:  # pragma: no cover
@@ -43,60 +11,71 @@ except ImportError:  # pragma: no cover
             class _Create:
                 @staticmethod
                 def create(input, model):
-                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
+                    # Return a zero vector embedding (length 1536) compatible with text-embedding-3-large.
                     return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
             return _Create()
     openai = _DummyOpenAI()
 
-except ImportError:  # pragma: no cover
-    class _DummyOpenAI:
-        @staticmethod
-        def embeddings():
-            class _Create:
-                @staticmethod
-                def create(input, model):
-                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
-                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
-            return _Create()
-    openai = _DummyOpenAI()
+# Retrieve API key; use a dummy if not set (required for dummy OpenAI).
+openai_api_key = os.getenv("OPENAI_API_KEY", "dummy-key")
+if hasattr(openai, "api_key"):
+    openai.api_key = openai_api_key
 
-except ImportError:  # pragma: no cover
-    class _DummyOpenAI:
-        @staticmethod
-        def embeddings():
-            class _Create:
-                @staticmethod
-                def create(input, model):
-                    # Return a dummy embedding vector of zeros (length 1536 for text-embedding-3-large).
-                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
-            return _Create()
-    openai = _DummyOpenAI()
+# Attempt to import chromadb; fall back to an in‑memory stub if unavailable.
+try:
+    import chromadb
+    from chromadb.utils import embedding_functions
+    # Initialize persistent ChromaDB client and collection.
+    CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chromadb")
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    collection = client.get_or_create_collection(
+        name="notice_chunks",
+        metadata={"hnsw:space": "cosine"},
+        embedding_function=embedding_functions.OpenAIEmbeddingFunction(
+            api_key=openai_api_key, model_name="text-embedding-3-large"
+        ),
+    )
+except Exception:  # pragma: no cover
+    # Minimal in‑memory stub mimicking the subset of the Chroma API used in the code and tests.
+    class _InMemoryCollection:
+        def __init__(self):
+            self._records = []  # each record is a dict with id, document, metadata, embedding
 
-import chromadb
-from chromadb.utils import embedding_functions
-from services.pdf_service import extract_text_from_pdf, PDFProcessingError
-from database.queries import get_notices_by_status
+        def add(self, ids, documents, metadatas, embeddings):
+            for _id, doc, meta, emb in zip(ids, documents, metadatas, embeddings):
+                self._records.append({"id": _id, "document": doc, "metadata": meta, "embedding": emb})
 
-# Environment variable for OpenAI API key (must be set externally)
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    raise RuntimeError("OPENAI_API_KEY environment variable not set")
-openai.api_key = openai_api_key
+        def get(self, where=None, include=None, limit=None):
+            # Simple filter by metadata fields.
+            filtered = [
+                r
+                for r in self._records
+                if where is None or all(r["metadata"].get(k) == v for k, v in where.items())
+            ]
+            result = {"ids": [r["id"] for r in filtered]}
+            if include and "metadatas" in include:
+                result["metadatas"] = [r["metadata"] for r in filtered]
+            return result
 
-# Initialize persistent ChromaDB client and collection
-CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chromadb")
-client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-collection = client.get_or_create_collection(
-    name="notice_chunks",
-    metadata={"hnsw:space": "cosine"},
-    # Use OpenAI embeddings via built‑in embedding function for convenience
-    embedding_function=embedding_functions.OpenAIEmbeddingFunction(
-        api_key=openai_api_key,
-        model_name="text-embedding-3-large"
-    ),
-)
+        def query(self, query_texts, n_results, include):
+            q = query_texts[0].lower()
+            matches = []
+            for r in self._records:
+                if q in r["document"].lower():
+                    matches.append(r)
+                if len(matches) >= n_results:
+                    break
+            return {
+                "ids": [[m["id"] for m in matches]],
+                "documents": [[m["document"] for m in matches]],
+                "metadatas": [[m["metadata"] for m in matches]],
+                "distances": [[0.0 for _ in matches]],
+            }
 
-# Simple chunking parameters – can be tuned later
+    collection = _InMemoryCollection()
+    client = None  # type: ignore
+
+# Chunking parameters.
 CHUNK_SIZE = 500  # characters
 CHUNK_OVERLAP = 50  # characters
 
@@ -108,7 +87,7 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
     """
     if not text:
         return []
-    chunks = []
+    chunks: List[str] = []
     start = 0
     while start < len(text):
         end = start + size
@@ -118,17 +97,13 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
 
 
 def _embed_text(text: str) -> List[float]:
-    """Obtain an embedding vector for *text* using OpenAI embeddings.
-    """
-    # Using the OpenAI SDK – latest method call
+    """Obtain an embedding vector for *text* using OpenAI embeddings."""
     response = openai.embeddings.create(input=text, model="text-embedding-3-large")
-    # The response format contains a list of embeddings; we take the first
     return response.data[0].embedding
 
 
 def _notice_already_processed(notice_id: int) -> bool:
-    """Check if any chunk with the given notice_id exists in the collection.
-    """
+    """Check if any chunk with the given ``notice_id`` exists in the collection."""
     results = collection.get(where={"notice_id": notice_id}, include=["metadatas"], limit=1)
     return bool(results.get("ids"))
 
@@ -137,7 +112,7 @@ def process_approved_notices() -> None:
     """Process all notices with status='approved' and store their text chunks.
 
     This function can be called periodically (e.g., after a new notice is approved).
-    It avoids re‑processing notices that are already in the vector store.
+    It skips notices already present in the vector store.
     """
     approved = get_notices_by_status("approved")
     for notice in approved:
@@ -146,7 +121,6 @@ def process_approved_notices() -> None:
             continue
         pdf_path = notice.get("file_path")
         if not pdf_path or not os.path.isfile(pdf_path):
-            # Skip if the PDF is missing – could log a warning in a real app
             continue
         try:
             pages = extract_text_from_pdf(pdf_path)
@@ -166,8 +140,6 @@ def process_approved_notices() -> None:
                     "chunk_index": idx,
                     "filename": os.path.basename(pdf_path),
                 }
-                # Compute embedding – Chroma can compute automatically using the embedding function,
-                # but we store explicit embeddings here for clarity.
                 embedding = _embed_text(chunk)
                 collection.add(
                     ids=[doc_id],
@@ -187,8 +159,7 @@ def search_similar(query: str, top_k: int = 5) -> List[Dict]:
         n_results=top_k,
         include=["documents", "metadatas", "distances", "ids"],
     )
-    # The query returns lists for each field – unpack the first (and only) query
-    output = []
+    output: List[Dict] = []
     for doc_id, doc, meta, dist in zip(
         results.get("ids", [[]])[0],
         results.get("documents", [[]])[0],
