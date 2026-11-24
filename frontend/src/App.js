@@ -6,6 +6,11 @@ const EMPTY_NOTICE = { title: '', description: '', category: '', department: '',
 const CATEGORY_OPTIONS = ['Academic', 'Examination', 'Events', 'General', 'Fees', 'Placement'];
 const DEPARTMENT_OPTIONS = ['Computer Science', 'Information Technology', 'Electronics', 'Mechanical', 'Civil'];
 const SEMESTER_OPTIONS = ['1', '2', '3', '4', '5', '6', '7', '8'];
+const ROLE_OPTIONS = [
+  { value: 'student', label: 'Student', description: 'Browse campus notices', icon: 'grid' },
+  { value: 'faculty', label: 'Faculty', description: 'Post and track notices', icon: 'file' },
+  { value: 'admin', label: 'Admin', description: 'Manage the platform', icon: 'shield' },
+];
 
 async function apiRequest(path, token, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
@@ -101,6 +106,7 @@ function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [selectedRole, setSelectedRole] = useState('');
   const [page, setPage] = useState('home');
   const [loginBusy, setLoginBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -117,6 +123,7 @@ function App() {
     setUser(null);
     setEmail('');
     setPassword('');
+    setSelectedRole('');
     setPage('home');
   }, []);
 
@@ -129,6 +136,10 @@ function App() {
 
   const handleLogin = async (event) => {
     event.preventDefault();
+    if (!selectedRole) {
+      setLoginError('Choose Student, Faculty, or Admin before signing in.');
+      return;
+    }
     setLoginBusy(true);
     setLoginError('');
     try {
@@ -136,9 +147,15 @@ function App() {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
+      const account = await apiRequest('/me', data.access_token);
+      if (account.role !== selectedRole) {
+        const roleLabel = ROLE_OPTIONS.find((option) => option.value === account.role)?.label || account.role;
+        setLoginError(`This account belongs to the ${roleLabel} workspace. Select ${roleLabel} and try again.`);
+        return;
+      }
       localStorage.setItem('notice-token', data.access_token);
       setToken(data.access_token);
-      setUser(await apiRequest('/me', data.access_token));
+      setUser(account);
       setPage('home');
     } catch (error) {
       setLoginError(error.message);
@@ -168,14 +185,23 @@ function App() {
           <div className="login-form-wrap">
             <span className="eyebrow">WELCOME BACK</span>
             <h2>Sign in to your campus</h2>
-            <p className="muted">Use your college account to continue.</p>
+            <p className="muted">Choose your workspace, then sign in with its account.</p>
             <form onSubmit={handleLogin} className="login-form">
+              <div className="role-picker" role="group" aria-labelledby="role-picker-label">
+                <span id="role-picker-label">Choose your workspace</span>
+                <div className="role-options">
+                  {ROLE_OPTIONS.map((option) => <button key={option.value} type="button" className={`role-option ${selectedRole === option.value ? 'role-option-selected' : ''}`} aria-pressed={selectedRole === option.value} onClick={() => { setSelectedRole(option.value); setLoginError(''); }}>
+                    <span className="role-option-icon"><Icon name={option.icon} size={17} /></span>
+                    <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                  </button>)}
+                </div>
+              </div>
               <label htmlFor="login-email">College email</label>
               <div className="input-with-icon"><Icon name="mail" size={18} /><input id="login-email" type="email" placeholder="you@college.edu" value={email} onChange={(event) => setEmail(event.target.value)} required /></div>
               <label htmlFor="login-password">Password</label>
               <div className="input-with-icon"><Icon name="shield" size={18} /><input id="login-password" type="password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} required /></div>
               {loginError && <p className="form-error" role="alert">{loginError}</p>}
-              <button className="button button-primary login-submit" disabled={loginBusy}>{loginBusy ? 'Signing in…' : <>Sign in <Icon name="arrow" size={17} /></>}</button>
+              <button className="button button-primary login-submit" disabled={loginBusy || !selectedRole}>{loginBusy ? 'Signing in…' : <>Sign in{selectedRole ? ` as ${ROLE_OPTIONS.find((option) => option.value === selectedRole)?.label}` : ''} <Icon name="arrow" size={17} /></>}</button>
             </form>
             <div className="login-help"><span className="status-dot" /> Secure role-based access</div>
           </div>
