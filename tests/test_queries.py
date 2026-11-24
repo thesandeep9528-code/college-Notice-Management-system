@@ -1,42 +1,19 @@
-import os
 import pytest
-from database.connection import init_db, get_connection
-from database.queries import (
+from backend.database import connection
+from backend.database.queries import (
     add_user,
     get_user_by_email,
     add_notice,
     get_notices_by_status,
 )
 
-# -------------------------------------------------------------------
-# Helper to wipe tables between test runs (so tests are idempotent)
-# -------------------------------------------------------------------
-def _clear_tables():
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE notices RESTART IDENTITY CASCADE;")
-            cur.execute("TRUNCATE TABLE users RESTART IDENTITY CASCADE;")
-        conn.commit()
-    finally:
-        conn.close()
-
-# -------------------------------------------------------------------
-# Pytest fixtures
-# -------------------------------------------------------------------
 @pytest.fixture(scope="function", autouse=True)
-def setup_and_teardown():
-    """Create tables, clear any existing rows, then yield to the test.
-    After the test finishes we clean up again.
-    """
-    init_db()
-    _clear_tables()
-    yield
-    _clear_tables()
+def setup_database(tmp_path, monkeypatch):
+    """Use a fresh SQLite database for each test."""
+    monkeypatch.setattr(connection, "DB_PATH", str(tmp_path / "test.sqlite3"))
+    connection.init_db()
 
-# -------------------------------------------------------------------
-# Tests
-# -------------------------------------------------------------------
+
 def test_add_and_get_user():
     email = "test_user@example.com"
     pwd = "secret123"
@@ -61,8 +38,8 @@ def test_add_and_query_notice():
         category="exam",
         department="CS",
         semester="Fall 2024",
-        uploaded_by=uploader_id,
         file_path="/tmp/dummy.pdf",
+        uploaded_by=uploader_id,
         status="pending",
     )
     assert isinstance(notice_id, int) and notice_id > 0
@@ -75,14 +52,8 @@ def test_add_and_query_notice():
     assert n["uploaded_by"] == uploader_id
     assert n["status"] == "pending"
 
-    # Change status manually to test filter (simulating an update)
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE notices SET status = 'approved' WHERE id = %s;", (notice_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    from backend.database.queries import update_notice_status
+    update_notice_status(notice_id, "approved")
 
     approved = get_notices_by_status("approved")
     assert len(approved) == 1
