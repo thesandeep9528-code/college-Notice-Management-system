@@ -9,16 +9,16 @@ A lightweight **React** web‑app that lets a college community **upload, manage
 |---|---------|
 | 1️⃣ | [Project Overview](#project-overview) |
 | 2️⃣ | [Key Features](#key-features) |
-| 3️⃣ | [Application Workflow](#application‑workflow) |
-| 4️⃣ | [System Architecture](#system‑architecture) |
-| 5️⃣ | [RAG Pipeline](#rag‑pipeline) |
-| 6️⃣ | [Technology Stack](#technology‑stack) |
-| 7️⃣ | [Folder Structure](#folder‑structure) |
-| 8️⃣ | [Installation & Setup](#installation‑setup) |
+| 3️⃣ | [Application Workflow](#application-workflow) |
+| 4️⃣ | [System Architecture](#system-architecture) |
+| 5️⃣ | [RAG Pipeline](#rag-pipeline) |
+| 6️⃣ | [Technology Stack](#technology-stack) |
+| 7️⃣ | [Folder Structure](#folder-structure) |
+| 8️⃣ | [Installation & Setup](#installation-setup) |
 | 9️⃣ | [Environment Variables](#environment-variables) |
-| 🔟 | [Running the App](#running‑app) |
-| 📸 | [Screenshots & Diagrams](#screenshots‑diagrams) |
-| 🚀 | [Future Improvements](#future‑improvements) |
+| 🔟 | [Running the Project](#running-the-project) |
+| 📸 | [Screenshots & Diagrams](#screenshots-diagrams) |
+| 🚀 | [Future Improvements](#future-improvements) |
 | 👤 | [Author](#author) |
 
 ---
