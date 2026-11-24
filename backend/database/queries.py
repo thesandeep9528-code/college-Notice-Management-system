@@ -179,7 +179,10 @@ def get_notices_by_status(
     category: Optional[str] = None,
     department: Optional[str] = None,
     semester: Optional[str] = None,
+    sort: str = "newest",
 ):
+    if sort not in {"newest", "oldest"}:
+        raise ValueError(f"Invalid notice sort order: {sort}")
     query = "SELECT * FROM notices"
     conditions = []
     params = []
@@ -205,7 +208,8 @@ def get_notices_by_status(
             params.append(value)
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY datetime(created_at) DESC, id DESC"
+    direction = "DESC" if sort == "newest" else "ASC"
+    query += f" ORDER BY datetime(created_at) {direction}, id {direction}"
     with db_session() as conn:
         return [dict(row) for row in conn.execute(query, params).fetchall()]
 

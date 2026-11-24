@@ -6,7 +6,7 @@
 - FastAPI API: `backend/main.py`.
 - Active database and schema initialization: `backend/database/connection.py`.
 - Active SQLite queries and audit events: `backend/database/queries.py`.
-- Active assistant implementation: `backend/services/rag.py` (currently a placeholder).
+- Active assistant implementation: `backend/services/rag.py` (local approved-notice retrieval with source excerpts and PDF page references).
 - Local database file: `backend/ai_notice.db`; schema startup performs additive changes only.
 
 The top-level `database/` and `services/` directories contain older or prototype implementations. The React app currently calls the `backend/` API and does not use the top-level PostgreSQL database.
@@ -40,12 +40,13 @@ The top-level `database/` and `services/` directories contain older or prototype
 
 ## Remaining role and product work
 
-- Student search UI exists, but sorting, personalized targeting, notice detail/download UI, and upcoming-deadline views need completion. The secure PDF API is ready for that UI.
-- `/rag` currently returns a placeholder echo; real retrieval, grounded answers, citations, and source-page links remain unimplemented.
+- Student notice explorer supports search, category/department/semester filters, newest/oldest sorting, profile-relevant prioritization, upcoming deadlines, notice details, and role-checked PDF preview/download.
+- `/rag` is restricted to students and searches approved notice metadata, descriptions, and extractable PDF text locally. It returns matching excerpts with notice IDs and page numbers when sourced from a PDF. It does not call an external model or use the legacy ChromaDB/OpenAI prototype.
+- PDF files without extractable text can still be previewed/downloaded, but the assistant can only search their notice metadata and description.
 - The legacy PostgreSQL implementation has not been consolidated or migrated; preserve it until its data and purpose are explicitly reconciled.
 
 ## Validation
 
 - Backend regression and API authorization tests: `python -m pytest -q`.
 - Frontend production build: `cd frontend; npm run build`.
-- API tests use isolated temporary SQLite files and cover token tampering, active-account invalidation, faculty ownership, PDF size/type checks and visibility, rejected-notice resubmission, student access boundaries, Admin workflows, and additive schema migration.
+- API tests use isolated temporary SQLite files and cover token tampering, active-account invalidation, faculty ownership, PDF size/type checks and visibility, rejected-notice resubmission, student access boundaries, approved-notice assistant sources and sorting, Admin workflows, and additive schema migration.

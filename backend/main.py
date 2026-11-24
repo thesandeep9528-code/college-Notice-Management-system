@@ -318,9 +318,29 @@ class StatusUpdateRequest(BaseModel):
     rejection_reason: Optional[str] = Field(default=None, max_length=1000)
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Chat messages cannot be blank")
+        return value.strip()
+
+
 class RagRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     top_k: Optional[int] = Field(default=5, ge=1, le=20)
+    history: List[ChatTurn] = Field(default_factory=list, max_length=8)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value):
+        if not value.strip():
+            raise ValueError("Ask a notice-related question")
+        return value.strip()
 
 
 @app.post("/login")
@@ -480,6 +500,7 @@ async def list_notices(
     category: Optional[str] = None,
     department: Optional[str] = None,
     semester: Optional[str] = None,
+    sort: Literal["newest", "oldest"] = "newest",
     user=Depends(get_current_user),
 ):
     owner_id = None
@@ -494,6 +515,7 @@ async def list_notices(
         category=category,
         department=department,
         semester=semester,
+        sort=sort,
     )
     return [_public_notice(notice) for notice in notices]
 
@@ -742,8 +764,12 @@ async def rag_query(
     payload: RagRequest,
     user=Depends(require_role(["student"])),
 ):
-    answer = answer_question(payload.question, top_k=payload.top_k)
-    return {"question": payload.question, "answer": answer}
+    result = answer_question(
+        payload.question,
+        top_k=payload.top_k if payload.top_k is not None else 5,
+        history=[turn.model_dump() for turn in payload.history],
+    )
+    return {"question": payload.question, **result}
 
 
 @app.get("/health")

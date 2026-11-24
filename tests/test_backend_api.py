@@ -39,7 +39,9 @@ class ASGISyncClient:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "DB_PATH", str(tmp_path / "api-tests.sqlite3"))
-    monkeypatch.setattr(main, "NOTICE_UPLOAD_DIR", tmp_path / "uploads")
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(main, "NOTICE_UPLOAD_DIR", upload_dir)
+    monkeypatch.setenv("NOTICE_UPLOAD_DIR", str(upload_dir))
     connection.init_db()
     yield ASGISyncClient()
 
@@ -66,6 +68,34 @@ def _create_user(client, headers, role, email):
     )
     assert response.status_code == 201
     return response.json()
+
+
+def _make_text_pdf(text):
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    parts = [b"%PDF-1.4\n"]
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(sum(map(len, parts)))
+        parts.append(f"{number} 0 obj\n".encode() + body + b"\nendobj\n")
+    xref_offset = sum(map(len, parts))
+    xref = b"xref\n0 6\n0000000000 65535 f \n"
+    xref += b"".join(
+        f"{offset:010d} 00000 n \n".encode() for offset in offsets
+    )
+    parts.append(
+        xref
+        + b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n"
+        + str(xref_offset).encode()
+        + b"\n%%EOF\n"
+    )
+    return b"".join(parts)
 
 
 def test_admin_routes_require_signed_active_identity(client):
@@ -414,3 +444,118 @@ def test_legacy_password_hash_upgrades_after_login(client):
             ("admin@example.com",),
         ).fetchone()["password_hash"]
     assert upgraded_hash.startswith("pbkdf2_sha256$")
+
+
+def test_student_notice_sorting_and_local_assistant_sources(client):
+    admin_headers = _login(client)
+    faculty = _create_user(client, admin_headers, "faculty", "faculty@example.edu")
+    student = _create_user(client, admin_headers, "student", "student@example.edu")
+    faculty_headers = _login(client, faculty["email"], "secure-pass-123")
+    student_headers = _login(client, student["email"], "secure-pass-123")
+
+    published_ids = []
+    for title, description in (
+        ("Registration guide", "Registration opens on September 12 for all students."),
+        ("Library hours", "The library closes at 8 PM during the examination period."),
+    ):
+        created = client.post(
+            "/notices",
+            headers=faculty_headers,
+            json={"title": title, "description": description},
+        ).json()
+        published_ids.append(created["id"])
+        assert client.put(
+            f"/notices/{created['id']}/status",
+            headers=admin_headers,
+            json={"status": "approved"},
+        ).status_code == 200
+
+    pending = client.post(
+        "/notices",
+        headers=faculty_headers,
+        json={
+            "title": "Registration review",
+            "description": "Unapproved registration information.",
+        },
+    ).json()
+    assert client.get(
+        f"/notices/{pending['id']}",
+        headers=student_headers,
+    ).status_code == 404
+    assert client.get(
+        "/notices",
+        headers=student_headers,
+        params={"sort": "oldest"},
+    ).json()[0]["id"] == published_ids[0]
+    assert [
+        notice["id"]
+        for notice in client.get(
+            "/notices",
+            headers=student_headers,
+            params={"sort": "newest"},
+        ).json()
+    ] == list(reversed(published_ids))
+    assert client.get(
+        "/notices",
+        headers=student_headers,
+        params={"sort": "random"},
+    ).status_code == 422
+
+    response = client.post(
+        "/rag",
+        headers=student_headers,
+        json={
+            "question": "When does registration open?",
+            "history": [{"role": "user", "content": "Tell me about registration."}],
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert "September 12" in result["answer"]
+    assert result["sources"][0]["notice_id"] == published_ids[0]
+    assert all(source["notice_id"] != pending["id"] for source in result["sources"])
+    assert result["sources"][0]["excerpt"]
+
+    assert client.post(
+        "/rag",
+        headers=faculty_headers,
+        json={"question": "When does registration open?"},
+    ).status_code == 403
+
+
+def test_student_assistant_returns_pdf_page_citations(client):
+    admin_headers = _login(client)
+    faculty = _create_user(client, admin_headers, "faculty", "faculty@example.edu")
+    student = _create_user(client, admin_headers, "student", "student@example.edu")
+    faculty_headers = _login(client, faculty["email"], "secure-pass-123")
+    student_headers = _login(client, student["email"], "secure-pass-123")
+
+    uploaded = client.post(
+        "/notices/upload",
+        headers=faculty_headers,
+        data={"title": "Registration deadline", "description": "See the attached schedule."},
+        files={
+            "pdf": (
+                "registration.pdf",
+                _make_text_pdf("Registration opens September 12"),
+                "application/pdf",
+            )
+        },
+    )
+    assert uploaded.status_code == 201
+    notice_id = uploaded.json()["id"]
+    assert client.put(
+        f"/notices/{notice_id}/status",
+        headers=admin_headers,
+        json={"status": "approved"},
+    ).status_code == 200
+
+    response = client.post(
+        "/rag",
+        headers=student_headers,
+        json={"question": "When does registration open?"},
+    )
+    assert response.status_code == 200
+    assert "September 12" in response.json()["answer"]
+    assert response.json()["sources"][0]["notice_id"] == notice_id
+    assert response.json()["sources"][0]["page_number"] == 1

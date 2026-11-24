@@ -64,6 +64,23 @@ def test_add_and_query_notice():
     assert approved[0]["status"] == "approved"
 
 
+def test_notice_query_supports_newest_and_oldest_sorting():
+    uploader_id = add_user("sorter@example.com", "pwd", "faculty")
+    first_id = add_notice("First notice", uploaded_by=uploader_id, status="approved")
+    second_id = add_notice("Second notice", uploaded_by=uploader_id, status="approved")
+
+    assert [notice["id"] for notice in get_notices_by_status(sort="oldest")] == [
+        first_id,
+        second_id,
+    ]
+    assert [notice["id"] for notice in get_notices_by_status(sort="newest")] == [
+        second_id,
+        first_id,
+    ]
+    with pytest.raises(ValueError, match="Invalid notice sort order"):
+        get_notices_by_status(sort="unexpected")
+
+
 def test_schema_upgrade_preserves_existing_users_and_notices(tmp_path, monkeypatch):
     legacy_path = tmp_path / "legacy.sqlite3"
     conn = sqlite3.connect(legacy_path)

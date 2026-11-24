@@ -157,7 +157,7 @@ function App() {
             <div className="login-highlights">
               <span><Icon name="check" size={16} /> Verified campus updates</span>
               <span><Icon name="check" size={16} /> Searchable in seconds</span>
-              <span><Icon name="check" size={16} /> AI-powered notice help</span>
+              <span><Icon name="check" size={16} /> Notice-grounded help</span>
             </div>
           </div>
           <p className="login-footer">A smarter way to stay connected to campus.</p>
@@ -226,7 +226,7 @@ function App() {
           <div className="topbar-right"><span className="today-label"><Icon name="calendar" size={16} /> {new Date().toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}</span><div className="topbar-avatar">{(user.email || 'U').charAt(0).toUpperCase()}</div></div>
         </header>
         <div className="page-content">
-          {role === 'student' && <StudentWorkspace page={page} setPage={setPage} token={token} />}
+          {role === 'student' && <StudentWorkspace page={page} setPage={setPage} token={token} user={user} />}
           {role === 'faculty' && <FacultyWorkspace page={page} setPage={setPage} token={token} notify={notify} />}
           {role === 'admin' && <AdminWorkspace page={page} setPage={setPage} token={token} user={user} notify={notify} />}
         </div>
@@ -249,7 +249,7 @@ function StatCard({ icon, label, value, note, tone }) {
   return <article className="stat-card"><span className={`stat-icon ${tone}`}><Icon name={icon} size={20} /></span><div className="stat-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
-function NoticeCard({ notice, admin = false, faculty = false, actionBusy = false, onApprove, onReject, onView, onDelete, onEdit, onPreview }) {
+function NoticeCard({ notice, admin = false, faculty = false, student = false, actionBusy = false, onApprove, onReject, onView, onDelete, onEdit, onPreview }) {
   const category = notice.category || 'Campus update';
   return (
     <article className="notice-card">
@@ -272,6 +272,7 @@ function NoticeCard({ notice, admin = false, faculty = false, actionBusy = false
         {notice.status === 'rejected' && onEdit && <button className="button button-soft" onClick={() => onEdit(notice)}>Edit & resubmit</button>}
         {['pending', 'rejected'].includes(notice.status) && onDelete && <button className="button button-reject" disabled={actionBusy} onClick={() => onDelete(notice)}>Delete</button>}
       </div>}
+      {student && <div className="notice-actions"><button className="button button-soft" onClick={() => onView(notice)}>View details</button>{notice.has_file && onPreview && <button className="button button-soft" onClick={() => onPreview(notice)}>Preview PDF</button>}</div>}
     </article>
   );
 }
@@ -293,14 +294,31 @@ function PdfPreviewDialog({ preview, onClose }) {
   );
 }
 
-function StudentWorkspace({ page, setPage, token }) {
+function StudentNoticeDetails({ notice, onClose, onPreview, onDownload }) {
+  if (!notice) return null;
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="detail-modal student-detail-modal" role="dialog" aria-modal="true" aria-labelledby="student-notice-title">
+        <div className="modal-heading"><div><span className="eyebrow">APPROVED NOTICE</span><h2 id="student-notice-title">{notice.title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close notice details"><Icon name="close" /></button></div>
+        <p className="notice-detail-description">{notice.description || 'No description provided.'}</p>
+        <dl className="detail-list"><dt>Category</dt><dd>{notice.category || 'Not set'}</dd><dt>Department</dt><dd>{notice.department || 'All departments'}</dd><dt>Semester</dt><dd>{notice.semester || 'All semesters'}</dd><dt>Deadline</dt><dd>{notice.deadline || 'No deadline listed'}</dd><dt>Published</dt><dd>{notice.created_at || 'Not recorded'}</dd></dl>
+        {notice.has_file && <div className="modal-actions"><button className="button button-primary" onClick={() => onPreview(notice)}>Preview PDF</button><button className="button button-soft" onClick={() => onDownload(notice)}>Download PDF</button></div>}
+      </section>
+    </div>
+  );
+}
+
+function StudentWorkspace({ page, setPage, token, user }) {
   const [notices, setNotices] = useState([]);
-  const [filters, setFilters] = useState({ search: '', category: '', department: '', semester: '' });
+  const [filters, setFilters] = useState({ search: '', category: '', department: '', semester: '', sort: 'newest' });
+  const [prioritizeProfile, setPrioritizeProfile] = useState(Boolean(user.department || user.semester));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [messages, setMessages] = useState([]);
   const [asking, setAsking] = useState(false);
+  const [selectedNotice, setSelectedNotice] = useState(null);
+  const [pdfPreview, setPdfPreview] = useState(null);
 
   useEffect(() => {
     if (page !== 'home') return undefined;
@@ -318,16 +336,88 @@ function StudentWorkspace({ page, setPage, token }) {
     return () => { active = false; window.clearTimeout(timer); };
   }, [filters, page, token]);
 
+  useEffect(() => () => {
+    if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+  }, [pdfPreview]);
+
+  const openPdfPreview = async (notice, pageNumber = null) => {
+    setError('');
+    try {
+      const blob = await fetchNoticePdf(notice.id, token);
+      const url = URL.createObjectURL(blob);
+      setPdfPreview({
+        filename: notice.file_name || `${notice.title}.pdf`,
+        url: pageNumber ? `${url}#page=${pageNumber}` : url,
+      });
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const downloadPdf = async (notice) => {
+    setError('');
+    try {
+      const blob = await fetchNoticePdf(notice.id, token, true);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = notice.file_name || `${notice.title}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const openNotice = async (notice) => {
+    setSelectedNotice(notice);
+    try {
+      setSelectedNotice(await apiRequest(`/notices/${notice.id}`, token));
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const openSource = async (source) => {
+    try {
+      const notice = await apiRequest(`/notices/${source.notice_id}`, token);
+      if (source.page_number && source.has_file) {
+        await openPdfPreview(notice, source.page_number);
+      } else {
+        setSelectedNotice(notice);
+      }
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
   const askQuestion = async (event) => {
     event.preventDefault();
     if (!question.trim()) return;
+    const userMessage = { role: 'user', content: question.trim() };
+    const history = messages.slice(-8).map(({ role, content }) => ({ role, content }));
+    setMessages((current) => [...current, userMessage]);
+    setQuestion('');
     setAsking(true);
-    setAnswer('');
     try {
-      const response = await apiRequest('/rag', token, { method: 'POST', body: JSON.stringify({ question: question.trim() }) });
-      setAnswer(response.answer);
+      const response = await apiRequest('/rag', token, {
+        method: 'POST',
+        body: JSON.stringify({ question: userMessage.content, history }),
+      });
+      setMessages((current) => [...current, {
+        role: 'assistant',
+        content: response.answer,
+        sources: response.sources || [],
+      }]);
     } catch (requestError) {
-      setAnswer(requestError.message);
+      setMessages((current) => [...current, {
+        role: 'assistant',
+        content: requestError.message,
+        error: true,
+        sources: [],
+      }]);
     } finally {
       setAsking(false);
     }
@@ -336,27 +426,52 @@ function StudentWorkspace({ page, setPage, token }) {
   if (page === 'assistant') {
     return (
       <div className="assistant-page">
-        <PageHeading eyebrow="YOUR NOTICE ASSISTANT" title={<>Answers, without<br className="desktop-break" /> the notice hunt.</>} description="Ask a question in plain language. The assistant looks through campus notice information to help you find what you need." />
+        <PageHeading eyebrow="YOUR NOTICE ASSISTANT" title={<>Answers, without<br className="desktop-break" /> the notice hunt.</>} description="Search approved notice text and PDF pages locally. Answers include matching excerpts and sources; notice text is not sent to an external AI service." action={messages.length > 0 && <button className="button button-soft" disabled={asking} onClick={() => setMessages([])}>Clear conversation</button>} />
         <section className="assistant-card">
           <div className="assistant-orb"><Icon name="spark" size={28} /></div>
-          <span className="eyebrow">CAMPUS AI</span><h2>What would you like to know?</h2><p>Try asking about exam schedules, registration deadlines, or campus events.</p>
+          <span className="eyebrow">APPROVED NOTICE SEARCH</span><h2>What would you like to know?</h2><p>Try asking about exam schedules, registration deadlines, or campus events.</p>
           <div className="prompt-suggestions">{['When is the next exam?', 'Any upcoming campus events?', 'What are the latest notices?'].map((prompt) => <button key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Icon name="arrow" size={14} /></button>)}</div>
-          <form className="assistant-form" onSubmit={askQuestion}><input aria-label="Ask about notices" placeholder="Ask anything about campus notices…" value={question} onChange={(event) => setQuestion(event.target.value)} /><button className="button button-primary" disabled={asking || !question.trim()}>{asking ? 'Thinking…' : <><Icon name="send" size={16} /> Ask</>}</button></form>
-          {answer && <div className="assistant-answer"><span className="answer-label"><Icon name="spark" size={15} /> ANSWER</span><p>{answer}</p></div>}
-          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers are based on available campus notice information.</div>
+          <form className="assistant-form" onSubmit={askQuestion}><input aria-label="Ask about notices" placeholder="Ask anything about campus notices…" value={question} onChange={(event) => setQuestion(event.target.value)} /><button className="button button-primary" disabled={asking || !question.trim()}>{asking ? 'Searching…' : <><Icon name="send" size={16} /> Ask</>}</button></form>
+          <div className="chat-transcript" aria-live="polite">
+            {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message chat-${message.role}`}>
+              <span className="answer-label">{message.role === 'user' ? 'YOU' : <><Icon name="spark" size={15} /> NOTICE ASSISTANT</>}</span>
+              <p role={message.error ? 'alert' : undefined}>{message.content}</p>
+              {message.sources?.length > 0 && <div className="chat-sources"><strong>Sources</strong>{message.sources.map((source) => <button className="chat-source" key={`${source.notice_id}-${source.page_number || 'notice'}`} onClick={() => openSource(source)}><span>{source.title}{source.page_number ? ` · page ${source.page_number}` : ''}</span><small>{source.excerpt}</small><span className="source-link">Open notice <Icon name="arrow" size={13} /></span></button>)}</div>}
+            </article>)}
+            {asking && <div className="chat-message chat-assistant" role="status"><span className="answer-label"><Icon name="spark" size={15} /> NOTICE ASSISTANT</span><p>Searching approved notices…</p></div>}
+          </div>
+          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers are excerpts from approved notices and may not cover information that is not published.</div>
         </section>
+        {error && <div className="inline-error assistant-error" role="alert">{error}</div>}
+        <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} />
+        <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
       </div>
     );
   }
 
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
-  const clearFilters = () => setFilters({ search: '', category: '', department: '', semester: '' });
-  const hasFilters = Object.values(filters).some(Boolean);
+  const clearFilters = () => setFilters({ search: '', category: '', department: '', semester: '', sort: 'newest' });
+  const hasFilters = Object.entries(filters).some(([key, value]) => key !== 'sort' && value);
+  const displayNotices = prioritizeProfile && (user.department || user.semester)
+    ? [...notices].sort((left, right) => {
+      const matchesProfile = (notice) => (!user.department || !notice.department
+        || notice.department.trim().toLowerCase() === user.department.trim().toLowerCase())
+        && (!user.semester || !notice.semester || String(notice.semester) === String(user.semester));
+      return Number(matchesProfile(right)) - Number(matchesProfile(left));
+    })
+    : notices;
+  const currentDate = new Date();
+  const today = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+  const upcomingDeadlines = displayNotices
+    .filter((notice) => notice.deadline && notice.deadline >= today)
+    .sort((left, right) => left.deadline.localeCompare(right.deadline))
+    .slice(0, 3);
 
   return (
     <div className="student-page">
-      <PageHeading eyebrow="YOUR CAMPUS, AT A GLANCE" title={<>Good to see you.<br className="desktop-break" /> Here’s what’s happening.</>} description="The latest approved updates from your college, all in one place." action={<button className="button button-soft" onClick={() => setPage('assistant')}><Icon name="spark" size={17} /> Ask AI assistant</button>} />
-      <section className="student-welcome"><div className="welcome-copy"><span className="welcome-kicker"><span className="live-dot" /> CAMPUS NOTICE BOARD</span><h2>Stay a step ahead.</h2><p>Find important updates, deadlines, and announcements from across campus.</p><button className="welcome-link" onClick={() => setPage('assistant')}>Have a question? Ask your AI assistant <Icon name="arrow" size={16} /></button></div><div className="welcome-art" aria-hidden="true"><div className="art-sun" /><div className="art-card art-card-one"><Icon name="calendar" size={17} /><span><b>Important dates</b><small>Never miss a deadline</small></span></div><div className="art-card art-card-two"><Icon name="bell" size={17} /><span><b>Campus updates</b><small>All in one place</small></span></div><div className="art-star">✳</div></div></section>
+      <PageHeading eyebrow="YOUR CAMPUS, AT A GLANCE" title={<>Good to see you.<br className="desktop-break" /> Here’s what’s happening.</>} description="The latest approved updates from your college, all in one place." action={<button className="button button-soft" onClick={() => setPage('assistant')}><Icon name="spark" size={17} /> Ask notice assistant</button>} />
+      <section className="student-welcome"><div className="welcome-copy"><span className="welcome-kicker"><span className="live-dot" /> CAMPUS NOTICE BOARD</span><h2>Stay a step ahead.</h2><p>Find important updates, deadlines, and announcements from across campus.</p><button className="welcome-link" onClick={() => setPage('assistant')}>Have a question? Ask the notice assistant <Icon name="arrow" size={16} /></button></div><div className="welcome-art" aria-hidden="true"><div className="art-sun" /><div className="art-card art-card-one"><Icon name="calendar" size={17} /><span><b>Important dates</b><small>Never miss a deadline</small></span></div><div className="art-card art-card-two"><Icon name="bell" size={17} /><span><b>Campus updates</b><small>All in one place</small></span></div><div className="art-star">✳</div></div></section>
+      {upcomingDeadlines.length > 0 && <section className="notice-section deadline-section"><div className="section-title-row"><div><span className="eyebrow">DON’T MISS A DATE</span><h2>Upcoming deadlines</h2></div><span className="section-caption">Based on published notice dates</span></div><div className="deadline-grid">{upcomingDeadlines.map((notice) => <button className="deadline-card" key={notice.id} onClick={() => openNotice(notice)}><span><Icon name="calendar" size={17} />{new Date(`${notice.deadline}T00:00:00`).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span><strong>{notice.title}</strong><small>{notice.category || 'Campus update'}</small></button>)}</div></section>}
       <section className="notice-section">
         <div className="section-title-row"><div><span className="eyebrow">FRESH FROM CAMPUS</span><h2>Notice board <span className="count-badge">{notices.length}</span></h2></div><span className="section-caption">Approved notices for students</span></div>
         <div className="filter-toolbar">
@@ -364,13 +479,17 @@ function StudentWorkspace({ page, setPage, token }) {
           <select aria-label="Filter by category" value={filters.category} onChange={(event) => updateFilter('category', event.target.value)}><option value="">All categories</option>{CATEGORY_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select>
           <select aria-label="Filter by department" value={filters.department} onChange={(event) => updateFilter('department', event.target.value)}><option value="">All departments</option>{DEPARTMENT_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select>
           <select aria-label="Filter by semester" value={filters.semester} onChange={(event) => updateFilter('semester', event.target.value)}><option value="">All semesters</option>{SEMESTER_OPTIONS.map((item) => <option key={item} value={item}>Semester {item}</option>)}</select>
+          <select aria-label="Sort notices" value={filters.sort} onChange={(event) => updateFilter('sort', event.target.value)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+          {(user.department || user.semester) && <label className="profile-priority"><input type="checkbox" checked={prioritizeProfile} onChange={(event) => setPrioritizeProfile(event.target.checked)} /> Prioritize notices for my profile</label>}
           {hasFilters && <button className="clear-filters" onClick={clearFilters}>Clear filters</button>}
         </div>
         {error && <div className="inline-error" role="alert">{error}</div>}
         {loading ? <div className="notice-grid">{[1, 2, 3].map((item) => <div key={item} className="skeleton-card" />)}</div>
-          : notices.length ? <div className="notice-grid">{notices.map((notice) => <NoticeCard key={notice.id} notice={notice} />)}</div>
+          : displayNotices.length ? <div className="notice-grid">{displayNotices.map((notice) => <NoticeCard key={notice.id} notice={notice} student onView={openNotice} onPreview={openPdfPreview} />)}</div>
             : <EmptyState icon={hasFilters ? 'search' : 'file'} title={hasFilters ? 'No matching notices' : 'It’s quiet for now'} description={hasFilters ? 'Try adjusting your search or filters to find another notice.' : 'Approved campus announcements will appear here as soon as they’re published.'} action={hasFilters && <button className="text-button" onClick={clearFilters}>Clear filters</button>} />}
       </section>
+      <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} />
+      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

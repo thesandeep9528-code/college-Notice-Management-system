@@ -1,6 +1,6 @@
 # AI‑Powered College Notice Intelligence System ✨
 
-A lightweight **React** web app for managing college notices and browsing approved announcements. Faculty can attach PDFs to notices, while students can search approved updates. A live Retrieval-Augmented Generation (RAG) assistant remains future work.
+A lightweight **React** web app for managing college notices and browsing approved announcements. Faculty can attach PDFs to notices, and students can search, sort, and explore approved updates with a locally grounded notice assistant.
 
 ---
 
@@ -28,7 +28,7 @@ The system is built for a **single college** and provides three user roles:
 
 | Role | Capabilities |
 |------|--------------|
-| **Student** | View only **approved** notices, search, filter, and ask RAG‑based questions. |
+| **Student** | View only **approved** notices, search, filter, sort, track upcoming deadlines, preview/download PDFs, and ask questions against approved notice content. |
 | **Faculty** | Submit notices with optional PDFs, track status, edit/resubmit rejected notices, and delete their own pending or rejected submissions. |
 | **Admin** | Manage users, activate/deactivate accounts, approve/reject notices, and view activity logs. |
 
@@ -42,8 +42,9 @@ All role‑based restrictions are enforced **server‑side** (see `backend/main.
 | 📄 | Faculty can submit notices with metadata, deadlines, and optional PDFs (10 MiB limit), then track and manage permitted submissions. |
 | ✅ | Admin can **approve**, **reject** or **delete** notices. |
 | 📊 | Admin dashboard shows student/faculty totals, notice status counts, and recent audited actions. |
-| 🔍 | Students can **search** by title/description, filter by category, department & semester. |
-| 🤖 | Student assistant UI is present; its current backend response is a placeholder, not a live RAG answer. |
+| 🔍 | Students can search by title/description, filter by category/department/semester, sort by date, prioritize profile-relevant notices, and see upcoming deadlines. |
+| 🤖 | Student assistant searches approved notice metadata, descriptions, and extractable PDF text locally and returns source excerpts with page references when available. |
+| 📑 | Students can view notice details and securely preview or download attached PDFs. |
 | 🗂️ | PDF extraction (`services/pdf_service.py`) with optional OCR fallback. |
 | 🧩 | Automatic notice intelligence (`services/notice_intelligence.py`) – categorisation, summary, deadline extraction, duplicate detection (file‑hash). |
 | 📦 | Vector store powered by **Chromadb** (`services/notice_embedding.py`). |
@@ -54,9 +55,10 @@ All role‑based restrictions are enforced **server‑side** (see `backend/main.
 
 ## Application Workflow
 ```text
-Student  ──► Search/Filter ► View Approved Notices
+Student  ──► Search/Filter/Sort ► View Approved Notices
                │
-               └─► Ask question ► Placeholder response (RAG integration remains future work)
+               ├─► View details ► Preview/Download PDF
+               └─► Ask question ► Local retrieval ► Grounded excerpts and sources
 ```
 ```text
 Faculty  ──► Create Notice ► Save (status = pending)
@@ -101,7 +103,7 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ---
 
 ## AI Notice Assistant
-The current React app calls `backend/services/rag.py`, which returns a placeholder response. Faculty PDF attachments are stored and served through role-checked API routes, but text extraction and the separate top-level `services/notice_embedding.py` pipeline are not connected to the active API flow. Live retrieval, grounded answers, and citations remain planned work.
+The active `/rag` endpoint searches only approved notices using their metadata, descriptions, and extractable text from stored PDFs. It returns matching excerpts and notice IDs, including page numbers for PDF matches. Retrieval runs locally without sending notice content to an external model; it does not generate or infer facts beyond the cited text. The separate top-level `services/notice_embedding.py` pipeline remains a prototype and is not used by the active API.
 
 > **Diagram:** *PDF Processing & RAG Pipeline*  
 > ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png)
@@ -114,8 +116,8 @@ The current React app calls `backend/services/rag.py`, which returns a placehold
 | **UI** | **React** (JavaScript) | Front‑end built with Create‑React‑App (`react-scripts`). |
 | **Backend** | **FastAPI** (Python 3.12) | Core API lives in `backend/main.py`. |
 | **Database** | **SQLite** (via `sqlite3`) | Stores users, notices, and auto‑generated metadata. |
-| **Vector Store** | **Chromadb** (local SQLite) | Stores text embeddings for RAG. |
-| **LLM** | Not connected in the active backend | The `/rag` endpoint currently returns a placeholder response. |
+| **Vector Store** | **Chromadb** (local SQLite) | Used only by older/prototype services, not by the active notice assistant. |
+| **LLM** | Not connected in the active backend | The notice assistant uses local keyword-based retrieval and quoted source excerpts. |
 | **PDF extraction** | **PyPDF2** (fallback OCR uses `pdf2image` + `pytesseract` if installed). |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
 | **Authentication** | HMAC-signed expiring bearer tokens; PBKDF2 password hashes with legacy SHA-256 upgrade on login. |
@@ -192,7 +194,7 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 | `CORS_ORIGINS` | Comma-separated allowed browser origins. Defaults to local React development origins. | `https://notices.example.edu` |
 | `REACT_APP_API_URL` | Optional frontend API base URL; defaults to `http://127.0.0.1:8000`. | `https://api.example.edu` |
 | `NOTICE_UPLOAD_DIR` | Optional directory for private notice PDF storage. Defaults to `backend/uploads/notices`; use persistent storage in deployments. | `D:\notice-data\pdfs` |
-| `OPENAI_API_KEY` | Reserved for the future RAG integration; the current active `/rag` implementation does not use it. | Set only when integrating RAG |
+| `OPENAI_API_KEY` | Used only by older/prototype services; the active notice assistant does not send data to OpenAI. | Optional for the prototype services |
 
 The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.
 
@@ -231,12 +233,12 @@ The React app will be served at `http://localhost:3000` and communicate with the
 ## Future Improvements
 | # | Planned Feature | Status |
 |---|----------------|--------|
-| 🚧 | Real PDF file upload & storage (instead of placeholder path) | **Phase 9** – partially implemented (UI ready). |
+| 🚧 | PDF upload, private storage, and role-checked preview/download. | Implemented for Faculty and students. |
 | 🚧 | Automatic notice categorisation, summarisation & deadline extraction – integrate into upload flow. | **Phase 10** – backend ready, UI pending. |
 | 🚧 | Duplicate‑notice detection using file hash. | Implemented in `notice_intelligence.py`. |
-| 🚧 | Semantic search UI (vector similarity ranking) | RAG already uses Chromadb; a dedicated search page can be added. |
+| 🚧 | Semantic/vector retrieval using the legacy ChromaDB prototype. | Not connected to the active app; current retrieval is local keyword matching. |
 | 🚧 | Deployment scripts (Docker, Kubernetes) | Not required for the current portfolio demo. |
-| 🚧 | Unit‑test coverage for authentication, permission checks, and RAG citation formatting. | Added in Phase 11. |
+| 🚧 | Expand tests for authentication, permissions, notice workflows, sorting, and assistant sources. | Core API and source-visibility cases are covered; expand as features grow. |
 
 ---
 
