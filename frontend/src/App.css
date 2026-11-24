@@ -67,6 +67,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .button-primary:hover:not(:disabled) { background: var(--purple-dark); box-shadow: 0 7px 16px rgba(98,88,217,.24); }
 .login-submit { justify-content: space-between; height: 47px; margin-top: 9px; padding: 0 16px; }
 .form-error { margin: 2px 0 0; color: #ca4f59; font-size: 12px; }
+.demo-credentials { display: grid; gap: 9px; margin-top: 20px; padding: 12px; border: 1px solid #e8e6fb; border-radius: 9px; background: #faf9ff; }
+.demo-credentials-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #424762; font-size: 10px; }
+.demo-credentials-heading > span { color: #8b82d8; font-size: 9px; font-weight: 600; }
+.demo-account-list { display: grid; gap: 6px; }
+.demo-account { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 8px 9px; border: 1px solid #ecebf5; border-radius: 7px; background: #fff; text-align: left; cursor: pointer; }
+.demo-account:hover { border-color: #b8b2f0; background: #fdfcff; }
+.demo-account-role { color: #5148bd; font-size: 10px; font-weight: 700; }
+.demo-account-email, .demo-account-password { overflow-wrap: anywhere; color: #717891; font-size: 9px; }
+.demo-account-password { grid-column: 1; }
+.demo-account-action { grid-column: 2; grid-row: 1 / span 3; align-self: center; color: #6258d9; font-size: 9px; font-weight: 700; text-align: right; }
+.demo-credentials > p { margin: 0; color: #8b90a4; font-size: 9px; line-height: 1.5; }
 .login-help { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 28px; color: #858ca1; font-size: 11px; }
 .status-dot, .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #50bd92; box-shadow: 0 0 0 3px rgba(80,189,146,.13); }
 .login-copyright { margin-top: 70px; color: #a1a7b8; font-size: 10px; }

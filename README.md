@@ -179,8 +179,8 @@ ai-college-notice/
    The backend initializes its schema additively at startup and creates a default admin when one does not exist:
    ```
    email: admin@example.com
-   password: admin123
    ```
+   The seeded admin password is for local development only. Set a unique password before allowing anyone else to access the app.
 
 ---
 
@@ -197,6 +197,8 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 | `OPENAI_API_KEY` | Used only by older/prototype services; the active notice assistant does not send data to OpenAI. | Optional for the prototype services |
 
 The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.
+
+For local development, the login page can show demo-account credentials from `frontend/.env.development.local`. Set `REACT_APP_SHOW_DEMO_CREDENTIALS=true` and provide `REACT_APP_DEMO_ADMIN_EMAIL`, `REACT_APP_DEMO_ADMIN_PASSWORD`, `REACT_APP_DEMO_FACULTY_EMAIL`, `REACT_APP_DEMO_FACULTY_PASSWORD`, `REACT_APP_DEMO_STUDENT_EMAIL`, and `REACT_APP_DEMO_STUDENT_PASSWORD`. This file is Git-ignored and only loaded by the React development server; do not copy credentials into this README or commit them. Anyone using the development server can see the credentials. Use only disposable local demo accounts and restart `npm start` after changing the file.
 
 ---
 

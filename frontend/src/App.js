@@ -11,6 +11,29 @@ const ROLE_OPTIONS = [
   { value: 'faculty', label: 'Faculty', description: 'Post and track notices', icon: 'file' },
   { value: 'admin', label: 'Admin', description: 'Manage the platform', icon: 'shield' },
 ];
+const DEMO_ACCOUNTS = [
+  {
+    role: 'admin',
+    label: 'Admin',
+    email: process.env.REACT_APP_DEMO_ADMIN_EMAIL,
+    password: process.env.REACT_APP_DEMO_ADMIN_PASSWORD,
+  },
+  {
+    role: 'faculty',
+    label: 'Faculty',
+    email: process.env.REACT_APP_DEMO_FACULTY_EMAIL,
+    password: process.env.REACT_APP_DEMO_FACULTY_PASSWORD,
+  },
+  {
+    role: 'student',
+    label: 'Student',
+    email: process.env.REACT_APP_DEMO_STUDENT_EMAIL,
+    password: process.env.REACT_APP_DEMO_STUDENT_PASSWORD,
+  },
+];
+const SHOW_DEMO_CREDENTIALS = process.env.NODE_ENV === 'development'
+  && process.env.REACT_APP_SHOW_DEMO_CREDENTIALS === 'true'
+  && DEMO_ACCOUNTS.every(({ email, password }) => email && password);
 
 async function apiRequest(path, token, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
@@ -203,6 +226,32 @@ function App() {
               {loginError && <p className="form-error" role="alert">{loginError}</p>}
               <button className="button button-primary login-submit" disabled={loginBusy || !selectedRole}>{loginBusy ? 'Signing in…' : <>Sign in{selectedRole ? ` as ${ROLE_OPTIONS.find((option) => option.value === selectedRole)?.label}` : ''} <Icon name="arrow" size={17} /></>}</button>
             </form>
+            {SHOW_DEMO_CREDENTIALS && <section className="demo-credentials" aria-labelledby="demo-credentials-title">
+              <div className="demo-credentials-heading">
+                <strong id="demo-credentials-title">Local demo accounts</strong>
+                <span>For development only</span>
+              </div>
+              <div className="demo-account-list">
+                {DEMO_ACCOUNTS.map((account) => <button
+                  key={account.role}
+                  type="button"
+                  className="demo-account"
+                  onClick={() => {
+                    setSelectedRole(account.role);
+                    setEmail(account.email);
+                    setPassword(account.password);
+                    setLoginError('');
+                  }}
+                  aria-label={`Fill ${account.label} demo credentials`}
+                >
+                  <span className="demo-account-role">{account.label}</span>
+                  <span className="demo-account-email">{account.email}</span>
+                  <span className="demo-account-password">Password: {account.password}</span>
+                  <span className="demo-account-action">Fill sign-in form</span>
+                </button>)}
+              </div>
+              <p>These credentials are visible to anyone using this local development app.</p>
+            </section>}
             <div className="login-help"><span className="status-dot" /> Secure role-based access</div>
           </div>
           <span className="login-copyright">© CampusNotice · Built for your college community</span>

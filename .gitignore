@@ -28,6 +28,7 @@ ENV/
 env/
 .env
 backend/.env
+frontend/.env.development.local
 
 # Local runtime data and installed frontend dependencies
 backend/ai_notice.db
