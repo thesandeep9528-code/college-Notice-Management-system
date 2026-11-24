@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 # Import existing backend helpers
-from database.connection import init_db, get_connection
-from database.queries import (
+from .database.connection import init_db, get_connection
+from .database.queries import (
     add_user,
     get_user_by_email,
     get_notices_by_status,
@@ -19,8 +19,8 @@ from database.queries import (
     get_all_users,
     delete_notice,
 )
-from database.auth import hash_password, verify_password
-from services.rag import answer_question
+from .database.auth import hash_password, verify_password
+from .services.rag import answer_question
 
 # -------------------------------------------------------------------
 # Simple token utilities (NOT production ready)
@@ -110,10 +110,17 @@ async def startup_event():
 @app.post("/login")
 async def login(data: LoginRequest):
     user = get_user_by_email(data.email)
-    if not user or not verify_password(data.password, user["password_hash"]):
+    if not user or not user["active"] or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_token(user["email"], user["role"])
     return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+
+@app.get("/me")
+async def current_user(user=Depends(get_current_user)):
+    account = get_user_by_email(user["email"])
+    if not account or not account["active"]:
+        raise HTTPException(status_code=401, detail="Account is unavailable")
+    return {"id": account["id"], "email": account["email"], "role": account["role"]}
 
 # -------------------------------------------------------------------
 # User management – admin only
@@ -136,8 +143,8 @@ async def toggle_user_active(user_id: int, active: bool):
 async def delete_user(user_id: int):
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id = ?;", (user_id,))
         conn.commit()
     finally:
         conn.close()
