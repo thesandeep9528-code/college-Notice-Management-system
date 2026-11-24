@@ -1,6 +1,6 @@
 # AI‑Powered College Notice Intelligence System ✨
 
-A lightweight **React** web‑app that lets a college community **upload, manage, search and query PDF notices**.  Students can **search by keywords, filter by category/department/semester, and ask natural‑language questions** backed by a Retrieval‑Augmented Generation (RAG) pipeline powered by **ChatGPT**.
+A lightweight **React** web app for managing college notices and browsing approved announcements. Students can search by keywords and filters. PDF upload and a live Retrieval-Augmented Generation (RAG) assistant remain future work.
 
 ---
 
@@ -29,7 +29,7 @@ The system is built for a **single college** and provides three user roles:
 | Role | Capabilities |
 |------|--------------|
 | **Student** | View only **approved** notices, search, filter, and ask RAG‑based questions. |
-| **Faculty** | Create new notices (PDF upload placeholder for now) and view their own submissions. |
+| **Faculty** | Submit text notices for review; a dedicated submissions-management and PDF-upload workflow remains future work. |
 | **Admin** | Manage users, activate/deactivate accounts, approve/reject notices, and view activity logs. |
 
 All role‑based restrictions are enforced **server‑side** (see `backend/main.py`).
@@ -41,14 +41,14 @@ All role‑based restrictions are enforced **server‑side** (see `backend/main.
 |---|---------|
 | 📄 | Faculty can add a new notice (title, description, category, department, semester). |
 | ✅ | Admin can **approve**, **reject** or **delete** notices. |
-| 📊 | Admin dashboard shows total numbers of students & faculty and activity logs. |
+| 📊 | Admin dashboard shows student/faculty totals, notice status counts, and recent audited actions. |
 | 🔍 | Students can **search** by title/description, filter by category, department & semester. |
-| 🤖 | RAG chatbot (`services/rag.py`) answers questions using **ChatGPT** and returns **source citations**. |
+| 🤖 | Student assistant UI is present; its current backend response is a placeholder, not a live RAG answer. |
 | 🗂️ | PDF extraction (`services/pdf_service.py`) with optional OCR fallback. |
 | 🧩 | Automatic notice intelligence (`services/notice_intelligence.py`) – categorisation, summary, deadline extraction, duplicate detection (file‑hash). |
 | 📦 | Vector store powered by **Chromadb** (`services/notice_embedding.py`). |
-| 🛡️ | Passwords stored as **hashed** values (`database/auth.py`). |
-| 📁 | Activity logging for admin actions (`logs/admin.log`). |
+| 🛡️ | API uses signed, expiring bearer tokens, active-account checks, role checks, and PBKDF2 password hashes. |
+| 📁 | Admin account and notice changes are recorded in the SQLite activity log. |
 
 ---
 
@@ -56,7 +56,7 @@ All role‑based restrictions are enforced **server‑side** (see `backend/main.
 ```text
 Student  ──► Search/Filter ► View Approved Notices
                │
-               └─► Ask question ► RAG pipeline ► ChatGPT answer + citations
+               └─► Ask question ► Placeholder response (RAG integration remains future work)
 ```
 ```text
 Faculty  ──► Create Notice ► Save (status = pending)
@@ -66,10 +66,11 @@ Faculty  ──► Create Notice ► Save (status = pending)
 ```text
 Admin    ──► Review Pending Notices ► Approve / Reject
                │
-               └─► Approved → process_approved_notices() → embed in Chromadb
+               └─► Approved → visible in the approved-notice list
                │
                └─► Rejected → excluded from student search
 ```
+               The live API and UI are under `backend/` and `frontend/`. The top-level `database/` and `services/` folders contain older/prototype implementations and are not the database or RAG service currently used by the React app.
 > **Diagram:** *Notice Upload & Approval Workflow*  
 > ![Notice Upload & Approval Workflow](docs/images/notice_upload_approval.png)
 
@@ -99,11 +100,8 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 
 ---
 
-## RAG Pipeline
-1. **Retrieve relevant chunks** – `services/notice_embedding.search_similar()` queries Chromadb.  
-2. **Build prompt** – context fragments + user question.  
-3. **Generate answer** – `openai` ChatGPT model.  
-4. **Add citations** – unique `(filename, page_number)` pairs are rendered under **Sources**.
+## AI Notice Assistant
+The current React app calls `backend/services/rag.py`, which returns a placeholder response. The separate top-level `services/notice_embedding.py` and PDF processing modules are prototypes; they are not yet connected to the active API flow. Live retrieval, grounded answers, citations, and PDF upload are planned work.
 
 > **Diagram:** *PDF Processing & RAG Pipeline*  
 > ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png)
@@ -117,11 +115,11 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 | **Backend** | **FastAPI** (Python 3.12) | Core API lives in `backend/main.py`. |
 | **Database** | **SQLite** (via `sqlite3`) | Stores users, notices, and auto‑generated metadata. |
 | **Vector Store** | **Chromadb** (local SQLite) | Stores text embeddings for RAG. |
-| **LLM** | **OpenAI ChatGPT** (`openai` package) | Uses `gpt‑4‑turbo` (or configured model). |
+| **LLM** | Not connected in the active backend | The `/rag` endpoint currently returns a placeholder response. |
 | **PDF extraction** | **PyPDF2** (fallback OCR uses `pdf2image` + `pytesseract` if installed). |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
-| **Authentication** | Password hashing (`bcrypt` via `database/auth.py`). |
-| **Logging** | Plain‑text file (`logs/admin.log`). |
+| **Authentication** | HMAC-signed expiring bearer tokens; PBKDF2 password hashes with legacy SHA-256 upgrade on login. |
+| **Logging** | Admin audit events stored in the application SQLite database. |
 | **Testing** | `pytest` | Test suite under `tests/`. |
 
 > **Diagram:** *Technology Stack Overview*  
@@ -174,9 +172,9 @@ ai-college-notice/
 4. **Create a `.env` file** in the project root (see next section) and add required secrets.
 5. **Initialize the database**  
    ```bash
-   .venv\Scripts\python -c "from database.connection import init_db; init_db()"
+   .venv\Scripts\python -c "from backend.database.connection import init_db; init_db()"
    ```
-   The `seed_admin.py` script runs automatically at app start and creates a default admin:
+   The backend initializes its schema additively at startup and creates a default admin when one does not exist:
    ```
    email: admin@example.com
    password: admin123
@@ -189,10 +187,13 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key (required for RAG) | `sk-...` |
-| `DB_PATH` | Path to the SQLite DB file | `database/sqlite_notices.db` |
+| `AUTH_SECRET_KEY` | Stable secret used to sign API tokens; required in production. Without it, development uses a process-only random secret and restarts sign users out. | Generate a private random value |
+| `APP_ENV` | Set to `production` to require `AUTH_SECRET_KEY`. | `production` |
+| `CORS_ORIGINS` | Comma-separated allowed browser origins. Defaults to local React development origins. | `https://notices.example.edu` |
+| `REACT_APP_API_URL` | Optional frontend API base URL; defaults to `http://127.0.0.1:8000`. | `https://api.example.edu` |
+| `OPENAI_API_KEY` | Reserved for the future RAG integration; the current active `/rag` implementation does not use it. | Set only when integrating RAG |
 
-The `database/config.py` file reads these variables with sensible defaults, so the app will still start with a local SQLite instance if you don't provide them.
+The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.
 
 ---
 

@@ -26,6 +26,8 @@ pip-delete-this-directory.txt
 venv/
 ENV/
 env/
+.env
+backend/.env
 
 # Local runtime data and installed frontend dependencies
 backend/ai_notice.db

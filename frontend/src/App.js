@@ -152,7 +152,7 @@ function App() {
     ? [{ key: 'home', title: 'Notice board', icon: 'grid' }, { key: 'assistant', title: 'Ask the assistant', icon: 'spark' }]
     : role === 'faculty'
       ? [{ key: 'home', title: 'My workspace', icon: 'grid' }, { key: 'create', title: 'Create a notice', icon: 'plus' }]
-      : [{ key: 'home', title: 'Overview', icon: 'grid' }, { key: 'approvals', title: 'Notice approvals', icon: 'check' }, { key: 'users', title: 'People & access', icon: 'users' }];
+      : [{ key: 'home', title: 'Overview', icon: 'grid' }, { key: 'notices', title: 'All notices', icon: 'file' }, { key: 'approvals', title: 'Notice approvals', icon: 'check' }, { key: 'users', title: 'People & access', icon: 'users' }];
 
   const roleTitle = { student: 'Student', faculty: 'Faculty', admin: 'Administrator' }[role] || role;
 
@@ -192,7 +192,7 @@ function App() {
         <div className="page-content">
           {role === 'student' && <StudentWorkspace page={page} setPage={setPage} token={token} />}
           {role === 'faculty' && <FacultyWorkspace page={page} setPage={setPage} token={token} user={user} noticeForm={noticeForm} setNoticeForm={setNoticeForm} createdNotice={createdNotice} setCreatedNotice={setCreatedNotice} notify={notify} />}
-          {role === 'admin' && <AdminWorkspace page={page} setPage={setPage} token={token} notify={notify} />}
+          {role === 'admin' && <AdminWorkspace page={page} setPage={setPage} token={token} user={user} notify={notify} />}
         </div>
       </main>
       {toast && <div className="toast" role="status"><span className="toast-check"><Icon name="check" size={15} /></span>{toast}</div>}
@@ -213,7 +213,7 @@ function StatCard({ icon, label, value, note, tone }) {
   return <article className="stat-card"><span className={`stat-icon ${tone}`}><Icon name={icon} size={20} /></span><div className="stat-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
-function NoticeCard({ notice, admin = false, onApprove, onReject }) {
+function NoticeCard({ notice, admin = false, actionBusy = false, onApprove, onReject, onView, onDelete }) {
   const category = notice.category || 'Campus update';
   return (
     <article className="notice-card">
@@ -224,7 +224,11 @@ function NoticeCard({ notice, admin = false, onApprove, onReject }) {
         {notice.department && <span><Icon name="building" size={15} />{notice.department}</span>}
         {notice.semester && <span><Icon name="file" size={15} />Semester {notice.semester}</span>}
       </div>
-      {admin && <div className="notice-actions"><button className="button button-approve" onClick={() => onApprove(notice.id)}><Icon name="check" size={16} /> Approve</button><button className="button button-reject" onClick={() => onReject(notice.id)}><Icon name="close" size={16} /> Reject</button></div>}
+      {admin && <div className="notice-actions">
+        {notice.status === 'pending' && <><button className="button button-approve" disabled={actionBusy} onClick={() => onApprove(notice.id)}><Icon name="check" size={16} /> Approve</button><button className="button button-reject" disabled={actionBusy} onClick={() => onReject(notice.id)}><Icon name="close" size={16} /> Reject</button></>}
+        {onView && <button className="button button-soft" onClick={() => onView(notice)}>Details</button>}
+        {onDelete && <button className="button button-reject" disabled={actionBusy} onClick={() => onDelete(notice)}>Delete</button>}
+      </div>}
     </article>
   );
 }
@@ -366,24 +370,37 @@ function FacultyWorkspace({ page, setPage, token, user, noticeForm, setNoticeFor
   );
 }
 
-function AdminWorkspace({ page, setPage, token, notify }) {
-  const [data, setData] = useState({ users: [], pending: [], approved: [], rejected: [] });
+function AdminWorkspace({ page, setPage, token, user, notify }) {
+  const [data, setData] = useState({ users: [], notices: [], dashboard: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [userForm, setUserForm] = useState({ email: '', password: '', role: 'student' });
+  const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'student', department: '', semester: '' });
+  const [editingUserId, setEditingUserId] = useState(null);
   const [savingUser, setSavingUser] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
+  const [userRole, setUserRole] = useState('');
+  const [userStatus, setUserStatus] = useState('');
+  const [noticeSearch, setNoticeSearch] = useState('');
+  const [noticeStatus, setNoticeStatus] = useState('');
+  const [noticeCategory, setNoticeCategory] = useState('');
+  const [noticeDepartment, setNoticeDepartment] = useState('');
+  const [selectedNotice, setSelectedNotice] = useState(null);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [noticeEditForm, setNoticeEditForm] = useState(null);
+  const [rejectingNoticeId, setRejectingNoticeId] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [users, pending, approved, rejected] = await Promise.all([
+      const [users, notices, dashboard] = await Promise.all([
         apiRequest('/users', token),
-        apiRequest('/notices?status=pending', token),
-        apiRequest('/notices?status=approved', token),
-        apiRequest('/notices?status=rejected', token),
+        apiRequest('/notices', token),
+        apiRequest('/admin/dashboard', token),
       ]);
-      setData({ users, pending, approved, rejected });
+      setData({ users, notices, dashboard });
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -393,54 +410,223 @@ function AdminWorkspace({ page, setPage, token, notify }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const reviewNotice = async (id, status) => {
-    try {
-      await apiRequest(`/notices/${id}/status`, token, { method: 'PUT', body: JSON.stringify({ status }) });
-      notify(status === 'approved' ? 'Notice approved and published.' : 'Notice rejected.');
-      await refresh();
-    } catch (requestError) {
-      notify(requestError.message);
-    }
+  const resetUserForm = () => {
+    setEditingUserId(null);
+    setUserForm({ name: '', email: '', password: '', role: 'student', department: '', semester: '' });
   };
 
-  const createUser = async (event) => {
+  const saveUser = async (event) => {
     event.preventDefault();
     setSavingUser(true);
+    setError('');
+    const payload = { ...userForm };
+    if (editingUserId && !payload.password) delete payload.password;
     try {
-      await apiRequest('/users', token, { method: 'POST', body: JSON.stringify({ ...userForm, active: true }) });
-      setUserForm({ email: '', password: '', role: 'student' });
-      notify('Account created.');
+      await apiRequest(editingUserId ? `/users/${editingUserId}` : '/users', token, {
+        method: editingUserId ? 'PUT' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      notify(editingUserId ? 'Account updated.' : 'Account created.');
+      resetUserForm();
       await refresh();
     } catch (requestError) {
-      notify(requestError.message);
+      setError(requestError.message);
     } finally {
       setSavingUser(false);
     }
   };
 
+  const editUser = (account) => {
+    setEditingUserId(account.id);
+    setUserForm({
+      name: account.name || '',
+      email: account.email,
+      password: '',
+      role: account.role,
+      department: account.department || '',
+      semester: account.semester || '',
+    });
+    setSelectedUser(null);
+  };
+
   const toggleUser = async (account) => {
+    const action = account.active ? 'deactivate' : 'activate';
+    if (account.active && !window.confirm(`Deactivate ${account.email}? They will lose access immediately.`)) return;
+    setError('');
     try {
       await apiRequest(`/users/${account.id}/activate?active=${!account.active}`, token, { method: 'PUT' });
-      notify(account.active ? 'Account deactivated.' : 'Account activated.');
+      notify(`Account ${action}d.`);
       await refresh();
     } catch (requestError) {
-      notify(requestError.message);
+      setError(requestError.message);
     }
   };
 
-  const roleCount = (value) => data.users.filter((account) => account.role === value).length;
+  const reviewNotice = async (id, status, reason = '') => {
+    if (status === 'rejected') {
+      setRejectingNoticeId(id);
+      setRejectionReason('');
+      return;
+    }
+    if (!window.confirm('Approve and publish this notice to students?')) return;
+    setActionBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/notices/${id}/status`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ status, rejection_reason: reason }),
+      });
+      notify('Notice approved and published.');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const submitRejection = async (event) => {
+    event.preventDefault();
+    if (!rejectionReason.trim() || !rejectingNoticeId) return;
+    setActionBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/notices/${rejectingNoticeId}/status`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'rejected', rejection_reason: rejectionReason.trim() }),
+      });
+      setRejectingNoticeId(null);
+      setRejectionReason('');
+      notify('Notice rejected with feedback for the faculty member.');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const removeNotice = async (notice) => {
+    if (!window.confirm(`Delete “${notice.title}”? This cannot be undone.`)) return;
+    setActionBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/notices/${notice.id}`, token, { method: 'DELETE' });
+      setSelectedNotice(null);
+      notify('Notice deleted.');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const saveNotice = async (event) => {
+    event.preventDefault();
+    if (!selectedNotice) return;
+    setActionBusy(true);
+    setError('');
+    try {
+      const updated = await apiRequest(`/notices/${selectedNotice.id}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(noticeEditForm),
+      });
+      setSelectedNotice(updated);
+      setNoticeEditForm(null);
+      notify('Notice details updated.');
+      await refresh();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const dashboard = data.dashboard || { notices: {}, recent_activity: [] };
+  const noticeCounts = dashboard.notices || {};
+  const visibleUsers = data.users.filter((account) => {
+    const query = userSearch.trim().toLowerCase();
+    const matchesSearch = !query || [account.name, account.email, account.department]
+      .some((value) => (value || '').toLowerCase().includes(query));
+    const matchesRole = !userRole || account.role === userRole;
+    const matchesStatus = !userStatus || String(Boolean(account.active)) === userStatus;
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+  const visibleNotices = data.notices.filter((notice) => {
+    const query = noticeSearch.trim().toLowerCase();
+    const matchesSearch = !query || [notice.title, notice.description, notice.department, notice.category]
+      .some((value) => (value || '').toLowerCase().includes(query));
+    return matchesSearch
+      && (!noticeStatus || notice.status === noticeStatus)
+      && (!noticeCategory || notice.category === noticeCategory)
+      && (!noticeDepartment || notice.department === noticeDepartment);
+  });
+  const pendingNotices = data.notices.filter((notice) => notice.status === 'pending');
 
   if (page === 'users') {
     return (
       <div className="admin-users-page">
-        <PageHeading eyebrow="CAMPUS DIRECTORY" title="People & access" description="Manage college accounts and keep role-based access up to date." />
+        <PageHeading eyebrow="CAMPUS DIRECTORY" title="People & access" description="Search accounts, review their campus details, and manage role-based access." action={<button className="button button-soft" onClick={refresh}>Refresh</button>} />
+        {error && <div className="inline-error" role="alert">{error}</div>}
         <div className="people-layout">
-          <section className="directory-card"><div className="section-title-row"><div><span className="eyebrow">ACCOUNT DIRECTORY</span><h2>Campus accounts <span className="count-badge">{data.users.length}</span></h2></div><button className="button button-soft" onClick={refresh}>Refresh</button></div>
-            {error && <div className="inline-error">{error}</div>}
-            {loading ? <div className="loading-row">Loading accounts…</div> : <div className="table-scroll"><table className="data-table"><thead><tr><th>EMAIL</th><th>ROLE</th><th>STATUS</th><th></th></tr></thead><tbody>{data.users.map((account) => <tr key={account.id}><td><span className="table-avatar">{account.email.charAt(0).toUpperCase()}</span><strong>{account.email}</strong></td><td><span className={`role-tag role-${account.role}`}>{account.role}</span></td><td><span className={`status-pill ${account.active ? 'status-approved' : 'status-rejected'}`}>{account.active ? 'Active' : 'Inactive'}</span></td><td><button className={`table-action ${account.active ? 'deactivate-action' : ''}`} onClick={() => toggleUser(account)}>{account.active ? 'Deactivate' : 'Activate'}</button></td></tr>)}</tbody></table>{!data.users.length && <EmptyState title="No accounts yet" description="New campus accounts will appear here." />}</div>}
+          <section className="directory-card">
+            <div className="section-title-row"><div><span className="eyebrow">ACCOUNT DIRECTORY</span><h2>Campus accounts <span className="count-badge">{loading ? '—' : visibleUsers.length}</span></h2></div></div>
+            <div className="filter-toolbar admin-filter-toolbar">
+              <label className="search-field"><Icon name="search" size={17} /><input aria-label="Search users" placeholder="Search name, email, department…" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} /></label>
+              <select aria-label="Filter users by role" value={userRole} onChange={(event) => setUserRole(event.target.value)}><option value="">All roles</option><option value="student">Students</option><option value="faculty">Faculty</option><option value="admin">Admins</option></select>
+              <select aria-label="Filter users by status" value={userStatus} onChange={(event) => setUserStatus(event.target.value)}><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select>
+            </div>
+            {loading ? <div className="loading-row">Loading accounts…</div> : <div className="table-scroll"><table className="data-table"><thead><tr><th>ACCOUNT</th><th>DEPARTMENT</th><th>ROLE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>{visibleUsers.map((account) => <tr key={account.id}><td><span className="table-avatar">{(account.name || account.email).charAt(0).toUpperCase()}</span><span className="account-cell"><strong>{account.name || 'Name not provided'}</strong><small>{account.email}</small></span></td><td>{account.department || '—'}</td><td><span className={`role-tag role-${account.role}`}>{account.role}</span></td><td><span className={`status-pill ${account.active ? 'status-approved' : 'status-rejected'}`}>{account.active ? 'Active' : 'Inactive'}</span></td><td><div className="table-actions"><button className="table-action" onClick={() => setSelectedUser(account)}>Details</button><button className="table-action" onClick={() => editUser(account)}>Edit</button><button className={`table-action ${account.active ? 'deactivate-action' : ''}`} disabled={account.id === user.id} onClick={() => toggleUser(account)}>{account.active ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}</tbody></table>{!visibleUsers.length && <EmptyState title="No matching accounts" description="Try changing the search or filters." />}</div>}
           </section>
-          <form className="create-user-card" onSubmit={createUser}><span className="aside-spark"><Icon name="users" size={19} /></span><h2>Add a campus account</h2><p>Create a login for a student or faculty member.</p><label htmlFor="account-email">College email</label><input id="account-email" className="form-control" type="email" placeholder="name@college.edu" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} required /><label htmlFor="account-password">Temporary password</label><input id="account-password" className="form-control" type="password" minLength="6" placeholder="At least 6 characters" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} required /><label htmlFor="account-role">Role</label><select id="account-role" className="form-control" value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}><option value="student">Student</option><option value="faculty">Faculty</option><option value="admin">Admin</option></select><button className="button button-primary full-button" disabled={savingUser}>{savingUser ? 'Creating…' : <><Icon name="plus" size={17} /> Create account</>}</button></form>
+          <form className="create-user-card" onSubmit={saveUser}>
+            <span className="aside-spark"><Icon name="users" size={19} /></span>
+            <h2>{editingUserId ? 'Edit campus account' : 'Add a campus account'}</h2>
+            <p>{editingUserId ? 'Update profile details and access role.' : 'Create a student, faculty, or administrator login.'}</p>
+            <label htmlFor="account-name">Full name</label><input id="account-name" className="form-control" maxLength="120" value={userForm.name} onChange={(event) => setUserForm({ ...userForm, name: event.target.value })} />
+            <label htmlFor="account-email">College email</label><input id="account-email" className="form-control" type="email" placeholder="name@college.edu" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} required />
+            <label htmlFor="account-department">Department</label><input id="account-department" className="form-control" maxLength="120" value={userForm.department} onChange={(event) => setUserForm({ ...userForm, department: event.target.value })} />
+            <label htmlFor="account-semester">Semester</label><input id="account-semester" className="form-control" maxLength="20" value={userForm.semester} onChange={(event) => setUserForm({ ...userForm, semester: event.target.value })} />
+            <label htmlFor="account-password">{editingUserId ? 'New password (optional)' : 'Temporary password'}</label><input id="account-password" className="form-control" type="password" minLength="8" placeholder={editingUserId ? 'Leave blank to keep current password' : 'At least 8 characters'} value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} required={!editingUserId} />
+            <label htmlFor="account-role">Role</label><select id="account-role" className="form-control" value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}><option value="student">Student</option><option value="faculty">Faculty</option><option value="admin">Admin</option></select>
+            <div className="user-form-actions"><button className="button button-primary full-button" disabled={savingUser}>{savingUser ? 'Saving…' : <><Icon name={editingUserId ? 'check' : 'plus'} size={17} /> {editingUserId ? 'Save changes' : 'Create account'}</>}</button>{editingUserId && <button className="button button-soft full-button" type="button" onClick={resetUserForm}>Cancel editing</button>}</div>
+          </form>
         </div>
+        {selectedUser && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedUser(null); }}><section className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="user-detail-title"><div className="modal-heading"><div><span className="eyebrow">CAMPUS ACCOUNT</span><h2 id="user-detail-title">{selectedUser.name || selectedUser.email}</h2></div><button className="icon-button" onClick={() => setSelectedUser(null)} aria-label="Close account details"><Icon name="close" /></button></div><dl className="detail-list"><dt>Email</dt><dd>{selectedUser.email}</dd><dt>Role</dt><dd>{selectedUser.role}</dd><dt>Status</dt><dd>{selectedUser.active ? 'Active' : 'Inactive'}</dd><dt>Department</dt><dd>{selectedUser.department || 'Not set'}</dd><dt>Semester</dt><dd>{selectedUser.semester || 'Not set'}</dd><dt>Account ID</dt><dd>{selectedUser.id}</dd></dl><button className="button button-primary" onClick={() => editUser(selectedUser)}>Edit account</button></section></div>}
+      </div>
+    );
+  }
+
+  if (page === 'notices') {
+    return (
+      <div className="admin-notices-page">
+        <PageHeading eyebrow="CAMPUS NOTICE ARCHIVE" title="All notices" description="Search notices across every review status, inspect metadata, and manage published content." action={<button className="button button-soft" onClick={refresh}>Refresh notices</button>} />
+        {error && <div className="inline-error" role="alert">{error}</div>}
+        <div className="filter-toolbar admin-filter-toolbar">
+          <label className="search-field"><Icon name="search" size={17} /><input aria-label="Search notices" placeholder="Search title, description, or department…" value={noticeSearch} onChange={(event) => setNoticeSearch(event.target.value)} /></label>
+          <select aria-label="Filter notices by status" value={noticeStatus} onChange={(event) => setNoticeStatus(event.target.value)}><option value="">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+          <select aria-label="Filter notices by category" value={noticeCategory} onChange={(event) => setNoticeCategory(event.target.value)}><option value="">All categories</option>{CATEGORY_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select>
+          <select aria-label="Filter notices by department" value={noticeDepartment} onChange={(event) => setNoticeDepartment(event.target.value)}><option value="">All departments</option>{DEPARTMENT_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select>
+        </div>
+        {loading ? <div className="notice-grid">{[1, 2, 3].map((item) => <div key={item} className="skeleton-card" />)}</div> : visibleNotices.length ? <div className="notice-grid">{visibleNotices.map((notice) => <NoticeCard key={notice.id} notice={notice} admin actionBusy={actionBusy} onApprove={(id) => reviewNotice(id, 'approved')} onReject={(id) => reviewNotice(id, 'rejected')} onView={setSelectedNotice} onDelete={removeNotice} />)}</div> : <EmptyState title="No matching notices" description="Try another search or status filter." />}
+        {selectedNotice && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setSelectedNotice(null); setNoticeEditForm(null); } }}><section className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="notice-detail-title">
+          <div className="modal-heading"><div><span className="eyebrow">NOTICE DETAILS</span><h2 id="notice-detail-title">{noticeEditForm ? 'Edit notice details' : selectedNotice.title}</h2></div><button className="icon-button" onClick={() => { setSelectedNotice(null); setNoticeEditForm(null); }} aria-label="Close notice details"><Icon name="close" /></button></div>
+          {noticeEditForm ? <form className="notice-edit-form" onSubmit={saveNotice}>
+            <label htmlFor="edit-notice-title">Title</label><input id="edit-notice-title" className="form-control" maxLength="255" required value={noticeEditForm.title} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, title: event.target.value })} />
+            <label htmlFor="edit-notice-description">Description</label><textarea id="edit-notice-description" className="form-control" rows="4" maxLength="10000" value={noticeEditForm.description} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, description: event.target.value })} />
+            <label htmlFor="edit-notice-category">Category</label><input id="edit-notice-category" className="form-control" maxLength="100" value={noticeEditForm.category} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, category: event.target.value })} />
+            <label htmlFor="edit-notice-department">Department</label><input id="edit-notice-department" className="form-control" maxLength="120" value={noticeEditForm.department} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, department: event.target.value })} />
+            <label htmlFor="edit-notice-semester">Semester</label><input id="edit-notice-semester" className="form-control" maxLength="20" value={noticeEditForm.semester} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, semester: event.target.value })} />
+            <label htmlFor="edit-notice-deadline">Deadline</label><input id="edit-notice-deadline" className="form-control" type="date" value={noticeEditForm.deadline} onChange={(event) => setNoticeEditForm({ ...noticeEditForm, deadline: event.target.value })} />
+            <div className="modal-actions"><button className="button button-primary" disabled={actionBusy}>{actionBusy ? 'Saving…' : 'Save metadata'}</button><button className="button button-soft" type="button" onClick={() => setNoticeEditForm(null)}>Cancel</button></div>
+          </form> : <>
+            <span className={`status-pill status-${selectedNotice.status}`}>{selectedNotice.status}</span>
+            <p className="notice-detail-description">{selectedNotice.description || 'No description provided.'}</p>
+            <dl className="detail-list"><dt>Category</dt><dd>{selectedNotice.category || 'Not set'}</dd><dt>Department</dt><dd>{selectedNotice.department || 'Not set'}</dd><dt>Semester</dt><dd>{selectedNotice.semester || 'All semesters'}</dd><dt>Deadline</dt><dd>{selectedNotice.deadline || 'Not set'}</dd><dt>Submitted by</dt><dd>{data.users.find((account) => account.id === selectedNotice.uploaded_by)?.email || `Account ${selectedNotice.uploaded_by || 'unknown'}`}</dd><dt>Created</dt><dd>{selectedNotice.created_at || 'Not recorded'}</dd>{selectedNotice.rejection_reason && <><dt>Rejection reason</dt><dd>{selectedNotice.rejection_reason}</dd></>}</dl>
+            <div className="modal-actions"><button className="button button-primary" onClick={() => setNoticeEditForm({ title: selectedNotice.title || '', description: selectedNotice.description || '', category: selectedNotice.category || '', department: selectedNotice.department || '', semester: selectedNotice.semester || '', deadline: (selectedNotice.deadline || '').slice(0, 10) })}>Edit metadata</button><button className="button button-reject" disabled={actionBusy} onClick={() => removeNotice(selectedNotice)}>Delete notice</button></div>
+          </>}
+        </section></div>}
+        {rejectingNoticeId && <div className="modal-backdrop"><form className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="rejection-title" onSubmit={submitRejection}><div className="modal-heading"><div><span className="eyebrow">NOTICE REVIEW</span><h2 id="rejection-title">Give the faculty member feedback</h2></div><button className="icon-button" type="button" onClick={() => setRejectingNoticeId(null)} aria-label="Close rejection form"><Icon name="close" /></button></div><label htmlFor="rejection-reason">Reason for rejection</label><textarea id="rejection-reason" className="form-control" rows="4" maxLength="1000" required value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} /><div className="modal-actions"><button className="button button-reject" disabled={actionBusy || !rejectionReason.trim()}>{actionBusy ? 'Submitting…' : 'Reject notice'}</button><button className="button button-soft" type="button" onClick={() => setRejectingNoticeId(null)}>Cancel</button></div></form></div>}
       </div>
     );
   }
@@ -448,26 +634,35 @@ function AdminWorkspace({ page, setPage, token, notify }) {
   if (page === 'approvals') {
     return (
       <div className="admin-approvals-page">
-        <PageHeading eyebrow="CONTENT MODERATION" title="Notice approvals" description="Review faculty submissions before they reach the student notice board." action={<button className="button button-soft" onClick={refresh}>Refresh queue</button>} />
-        <div className="queue-summary"><span className="queue-number">{data.pending.length}</span><div><strong>Waiting for review</strong><p>Approved notices become visible to students immediately.</p></div><span className="queue-icon"><Icon name="check" size={22} /></span></div>
-        {error && <div className="inline-error">{error}</div>}
-        {loading ? <div className="notice-grid">{[1, 2].map((item) => <div key={item} className="skeleton-card" />)}</div> : data.pending.length ? <div className="notice-grid">{data.pending.map((notice) => <NoticeCard key={notice.id} notice={notice} admin onApprove={(id) => reviewNotice(id, 'approved')} onReject={(id) => reviewNotice(id, 'rejected')} />)}</div> : <EmptyState icon="check" title="You’re all caught up" description="There are no notices waiting for review right now." />}
+        <PageHeading eyebrow="CONTENT MODERATION" title="Notice approvals" description="Review faculty submissions and provide clear feedback before they reach students." action={<button className="button button-soft" onClick={refresh}>Refresh queue</button>} />
+        {error && <div className="inline-error" role="alert">{error}</div>}
+        <div className="queue-summary"><span className="queue-number">{loading ? '—' : pendingNotices.length}</span><div><strong>Waiting for review</strong><p>Approved notices become visible to students immediately.</p></div><span className="queue-icon"><Icon name="check" size={22} /></span></div>
+        {loading ? <div className="notice-grid">{[1, 2].map((item) => <div key={item} className="skeleton-card" />)}</div> : pendingNotices.length ? <div className="notice-grid">{pendingNotices.map((notice) => <NoticeCard key={notice.id} notice={notice} admin actionBusy={actionBusy} onApprove={(id) => reviewNotice(id, 'approved')} onReject={(id) => reviewNotice(id, 'rejected')} onView={setSelectedNotice} onDelete={removeNotice} />)}</div> : <EmptyState icon="check" title="You’re all caught up" description="There are no notices waiting for review right now." />}
+        {selectedNotice && <div className="modal-backdrop"><section className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="approval-detail-title"><div className="modal-heading"><div><span className="eyebrow">NOTICE DETAILS</span><h2 id="approval-detail-title">{selectedNotice.title}</h2></div><button className="icon-button" onClick={() => setSelectedNotice(null)} aria-label="Close notice details"><Icon name="close" /></button></div><p className="notice-detail-description">{selectedNotice.description || 'No description provided.'}</p><dl className="detail-list"><dt>Category</dt><dd>{selectedNotice.category || 'Not set'}</dd><dt>Department</dt><dd>{selectedNotice.department || 'Not set'}</dd><dt>Semester</dt><dd>{selectedNotice.semester || 'All semesters'}</dd><dt>Submitted by</dt><dd>{data.users.find((account) => account.id === selectedNotice.uploaded_by)?.email || `Account ${selectedNotice.uploaded_by || 'unknown'}`}</dd><dt>Submitted</dt><dd>{selectedNotice.created_at || 'Not recorded'}</dd></dl></section></div>}
+        {rejectingNoticeId && <div className="modal-backdrop"><form className="detail-modal" role="dialog" aria-modal="true" aria-labelledby="rejection-title" onSubmit={submitRejection}><div className="modal-heading"><div><span className="eyebrow">NOTICE REVIEW</span><h2 id="rejection-title">Give the faculty member feedback</h2></div><button className="icon-button" type="button" onClick={() => setRejectingNoticeId(null)} aria-label="Close rejection form"><Icon name="close" /></button></div><label htmlFor="rejection-reason">Reason for rejection</label><textarea id="rejection-reason" className="form-control" rows="4" maxLength="1000" required value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} /><div className="modal-actions"><button className="button button-reject" disabled={actionBusy || !rejectionReason.trim()}>{actionBusy ? 'Submitting…' : 'Reject notice'}</button><button className="button button-soft" type="button" onClick={() => setRejectingNoticeId(null)}>Cancel</button></div></form></div>}
       </div>
     );
   }
 
+  const summaryStats = [
+    { icon: 'users', label: 'Students', value: dashboard.students, note: 'Registered accounts', tone: 'stat-indigo' },
+    { icon: 'building', label: 'Faculty', value: dashboard.faculty, note: 'Campus contributors', tone: 'stat-cyan' },
+    { icon: 'file', label: 'Total notices', value: noticeCounts.total, note: 'Across all statuses', tone: 'stat-indigo' },
+    { icon: 'check', label: 'Pending', value: noticeCounts.pending, note: 'Awaiting review', tone: 'stat-amber' },
+    { icon: 'check', label: 'Approved', value: noticeCounts.approved, note: 'Visible to students', tone: 'stat-green' },
+    { icon: 'close', label: 'Rejected', value: noticeCounts.rejected, note: 'Feedback provided', tone: 'stat-cyan' },
+  ];
+
   return (
     <div className="admin-page">
-      <PageHeading eyebrow="CAMPUS OVERVIEW" title="A clear view of campus." description="Keep an eye on your community and the notices moving through it." action={<button className="button button-soft" onClick={refresh}>Refresh overview</button>} />
+      <PageHeading eyebrow="CAMPUS OVERVIEW" title="A clear view of campus." description="Monitor accounts, notice approvals, and recent platform activity." action={<button className="button button-soft" onClick={refresh}>Refresh overview</button>} />
       {error && <div className="inline-error" role="alert">{error}</div>}
       <section className="admin-banner"><div><span className="welcome-kicker"><span className="live-dot" /> ADMIN OVERVIEW</span><h2>Good work keeps everyone informed.</h2><p>Review announcements and keep campus accounts up to date.</p></div><div className="admin-banner-art"><span><Icon name="shield" size={31} /></span></div></section>
-      <div className="stats-grid">
-        <StatCard icon="users" label="Students" value={loading ? '—' : roleCount('student')} note="Registered accounts" tone="stat-indigo" />
-        <StatCard icon="building" label="Faculty" value={loading ? '—' : roleCount('faculty')} note="Campus contributors" tone="stat-cyan" />
-        <StatCard icon="file" label="Published notices" value={loading ? '—' : data.approved.length} note="Visible to students" tone="stat-green" />
-        <button className="stat-card stat-card-button" onClick={() => setPage('approvals')}><span className="stat-icon stat-amber"><Icon name="check" size={20} /></span><span className="stat-copy"><span>Awaiting review</span><strong>{loading ? '—' : data.pending.length}</strong><small>Open approval queue <Icon name="arrow" size={13} /></small></span></button>
+      <div className="stats-grid">{summaryStats.map((item) => <StatCard key={item.label} {...item} value={loading ? '—' : (item.value ?? 0)} />)}</div>
+      <div className="admin-lower-grid">
+        <section className="quick-actions-card"><div className="section-title-row"><div><span className="eyebrow">KEEP THINGS MOVING</span><h2>Quick actions</h2></div></div><button className="quick-action" onClick={() => setPage('approvals')}><span className="quick-action-icon quick-amber"><Icon name="check" /></span><span><b>Review pending notices</b><small>{loading ? 'Loading queue…' : `${noticeCounts.pending || 0} waiting for your review`}</small></span><Icon name="arrow" size={18} /></button><button className="quick-action" onClick={() => setPage('users')}><span className="quick-action-icon quick-indigo"><Icon name="users" /></span><span><b>Manage campus accounts</b><small>{loading ? 'Loading accounts…' : `${dashboard.total_users || 0} accounts in the directory`}</small></span><Icon name="arrow" size={18} /></button><button className="quick-action" onClick={() => setPage('notices')}><span className="quick-action-icon quick-indigo"><Icon name="file" /></span><span><b>Browse all notices</b><small>{loading ? 'Loading notices…' : `${noticeCounts.total || 0} notices across campus`}</small></span><Icon name="arrow" size={18} /></button></section>
+        <section className="recent-card"><div className="section-title-row"><div><span className="eyebrow">AUDIT TRAIL</span><h2>Recent platform activity</h2></div></div>{loading ? <div className="loading-row">Loading activity…</div> : dashboard.recent_activity?.length ? dashboard.recent_activity.map((activity) => <div className="activity-item" key={activity.id}><span className="recent-file"><Icon name={activity.entity_type === 'notice' ? 'file' : 'users'} size={16} /></span><div><strong>{activity.actor_name || activity.actor_email || 'System'} {activity.action} {activity.entity_type}</strong><small>{activity.details || `${activity.entity_type} ${activity.entity_id || ''}`}</small></div><time>{activity.created_at}</time></div>) : <EmptyState title="No activity recorded yet" description="Account and notice changes will appear here." />}</section>
       </div>
-      <div className="admin-lower-grid"><section className="quick-actions-card"><div className="section-title-row"><div><span className="eyebrow">KEEP THINGS MOVING</span><h2>Quick actions</h2></div></div><button className="quick-action" onClick={() => setPage('approvals')}><span className="quick-action-icon quick-amber"><Icon name="check" /></span><span><b>Review pending notices</b><small>{data.pending.length} waiting for your review</small></span><Icon name="arrow" size={18} /></button><button className="quick-action" onClick={() => setPage('users')}><span className="quick-action-icon quick-indigo"><Icon name="users" /></span><span><b>Manage campus accounts</b><small>{data.users.length} accounts in the directory</small></span><Icon name="arrow" size={18} /></button></section><section className="recent-card"><div className="section-title-row"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recently approved</h2></div><button className="text-button" onClick={() => setPage('approvals')}>Review queue <Icon name="arrow" size={14} /></button></div>{data.approved.slice(0, 3).map((notice) => <div className="recent-notice" key={notice.id}><span className="recent-file"><Icon name="file" size={17} /></span><div><strong>{notice.title}</strong><small>{notice.category || 'Campus update'}{notice.department ? ` · ${notice.department}` : ''}</small></div><span className="status-pill status-approved">Live</span></div>)}{!loading && !data.approved.length && <p className="muted small-muted">Approved notices will show here.</p>}</section></div>
     </div>
   );
 }
