@@ -6,7 +6,9 @@ import pytest
 
 from backend.database import connection
 from backend.database.connection import db_session
-from backend.main import app
+from backend import main
+
+app = main.app
 
 
 class ASGISyncClient:
@@ -30,10 +32,14 @@ class ASGISyncClient:
     def put(self, path, **kwargs):
         return self.request("PUT", path, **kwargs)
 
+    def delete(self, path, **kwargs):
+        return self.request("DELETE", path, **kwargs)
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "DB_PATH", str(tmp_path / "api-tests.sqlite3"))
+    monkeypatch.setattr(main, "NOTICE_UPLOAD_DIR", tmp_path / "uploads")
     connection.init_db()
     yield ASGISyncClient()
 
@@ -98,6 +104,8 @@ def test_faculty_cannot_spoof_notice_owner_or_approval(client):
         headers=faculty_headers,
         json={
             "title": "Faculty notice",
+            "category": "Academic",
+            "department": "Computer Science",
             "uploaded_by": other_faculty["id"],
             "status": "approved",
         },
@@ -111,6 +119,17 @@ def test_faculty_cannot_spoof_notice_owner_or_approval(client):
         headers=admin_headers,
     ).json()[0]
     assert admin_notice["uploaded_by"] == faculty["id"]
+    matching = client.get(
+        "/notices",
+        headers=faculty_headers,
+        params={
+            "search": "Faculty notice",
+            "status": "pending",
+            "category": "Academic",
+            "department": "Computer Science",
+        },
+    )
+    assert [notice["id"] for notice in matching.json()] == [admin_notice["id"]]
     assert client.get("/notices", headers=other_headers).json() == []
     assert client.get(
         f"/notices/{admin_notice['id']}",
@@ -210,6 +229,174 @@ def test_admin_can_search_users_and_cannot_remove_last_admin(client):
         json={"active": False},
     )
     assert response.status_code == 409
+
+
+def test_faculty_uploads_pdf_and_file_access_matches_notice_visibility(client):
+    admin_headers = _login(client)
+    faculty = _create_user(client, admin_headers, "faculty", "faculty@example.edu")
+    other = _create_user(client, admin_headers, "faculty", "other@example.edu")
+    faculty_headers = _login(client, faculty["email"], "secure-pass-123")
+    other_headers = _login(client, other["email"], "secure-pass-123")
+    pdf_content = b"%PDF-1.4\nsample notice"
+
+    uploaded = client.post(
+        "/notices/upload",
+        headers=faculty_headers,
+        data={
+            "title": "PDF notice",
+            "description": "Review the attached schedule.",
+            "category": "Academic",
+            "department": "Computer Science",
+            "semester": "3",
+            "deadline": "2026-12-01",
+        },
+        files={"pdf": ("schedule.pdf", pdf_content, "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    notice = uploaded.json()
+    assert notice["status"] == "pending"
+    assert notice["has_file"] is True
+    assert notice["file_name"] == "schedule.pdf"
+    assert "file_path" not in notice
+
+    dashboard = client.get("/faculty/dashboard", headers=faculty_headers)
+    assert dashboard.status_code == 200
+    assert dashboard.json()["total"] == 1
+    assert dashboard.json()["pending"] == 1
+    assert dashboard.json()["recent_notices"][0]["id"] == notice["id"]
+    assert client.get("/faculty/dashboard", headers=admin_headers).status_code == 403
+
+    file_response = client.get(
+        f"/notices/{notice['id']}/file",
+        headers=faculty_headers,
+    )
+    assert file_response.status_code == 200
+    assert file_response.content == pdf_content
+    assert file_response.headers["content-type"] == "application/pdf"
+    assert client.get(
+        f"/notices/{notice['id']}/file",
+        headers=other_headers,
+    ).status_code == 404
+
+    student = _create_user(client, admin_headers, "student", "student@example.edu")
+    student_headers = _login(client, student["email"], "secure-pass-123")
+    assert client.post(
+        "/notices/upload",
+        headers=student_headers,
+        data={"title": "Student upload attempt"},
+        files={"pdf": ("notice.pdf", pdf_content, "application/pdf")},
+    ).status_code == 403
+    assert client.get(
+        f"/notices/{notice['id']}/file",
+        headers=student_headers,
+    ).status_code == 404
+    assert client.put(
+        f"/notices/{notice['id']}/status",
+        headers=admin_headers,
+        json={"status": "approved"},
+    ).status_code == 200
+    assert client.get(
+        f"/notices/{notice['id']}/file",
+        headers=student_headers,
+    ).content == pdf_content
+
+
+def test_upload_rejects_non_pdf_and_oversized_files(client, monkeypatch):
+    admin_headers = _login(client)
+    faculty = _create_user(client, admin_headers, "faculty", "faculty@example.edu")
+    faculty_headers = _login(client, faculty["email"], "secure-pass-123")
+    bad_file = client.post(
+        "/notices/upload",
+        headers=faculty_headers,
+        data={"title": "Invalid attachment"},
+        files={"pdf": ("notice.pdf", b"not a PDF", "application/pdf")},
+    )
+    assert bad_file.status_code == 415
+
+    invalid_deadline = client.post(
+        "/notices/upload",
+        headers=faculty_headers,
+        data={"title": "Invalid deadline", "deadline": "next week"},
+        files={"pdf": ("notice.pdf", b"%PDF-1.4\nvalid enough", "application/pdf")},
+    )
+    assert invalid_deadline.status_code == 422
+    assert not main.NOTICE_UPLOAD_DIR.exists()
+
+    monkeypatch.setattr(main, "MAX_NOTICE_PDF_SIZE", 16)
+    oversized_file = client.post(
+        "/notices/upload",
+        headers=faculty_headers,
+        data={"title": "Large attachment"},
+        files={"pdf": ("notice.pdf", b"%PDF-" + b"x" * 20, "application/pdf")},
+    )
+    assert oversized_file.status_code == 413
+    assert client.get("/notices", headers=faculty_headers).json() == []
+
+
+def test_faculty_can_resubmit_rejected_and_delete_only_owned_unapproved_notices(client):
+    admin_headers = _login(client)
+    faculty = _create_user(client, admin_headers, "faculty", "faculty@example.edu")
+    other = _create_user(client, admin_headers, "faculty", "other@example.edu")
+    faculty_headers = _login(client, faculty["email"], "secure-pass-123")
+    other_headers = _login(client, other["email"], "secure-pass-123")
+    created = client.post(
+        "/notices",
+        headers=faculty_headers,
+        json={"title": "Needs revision"},
+    )
+    notice_id = created.json()["id"]
+    assert client.put(
+        f"/notices/{notice_id}/status",
+        headers=admin_headers,
+        json={"status": "rejected", "rejection_reason": "Clarify the date."},
+    ).status_code == 200
+    assert client.put(
+        f"/notices/{notice_id}/resubmit",
+        headers=other_headers,
+        data={"title": "Attempt to edit another notice"},
+    ).status_code == 404
+
+    resubmitted = client.put(
+        f"/notices/{notice_id}/resubmit",
+        headers=faculty_headers,
+        data={
+            "title": "Updated notice",
+            "description": "Corrected date.",
+            "category": "Academic",
+        },
+    )
+    assert resubmitted.status_code == 200
+    assert resubmitted.json()["status"] == "pending"
+    assert resubmitted.json()["rejection_reason"] is None
+
+    assert client.put(
+        f"/notices/{notice_id}/resubmit",
+        headers=faculty_headers,
+        data={"title": "Second attempt"},
+    ).status_code == 409
+    assert client.delete(
+        f"/notices/{notice_id}/faculty",
+        headers=other_headers,
+    ).status_code == 404
+    assert client.delete(
+        f"/notices/{notice_id}/faculty",
+        headers=faculty_headers,
+    ).status_code == 200
+
+    approved = client.post(
+        "/notices",
+        headers=faculty_headers,
+        json={"title": "Published notice"},
+    ).json()
+    assert client.put(
+        f"/notices/{approved['id']}/status",
+        headers=admin_headers,
+        json={"status": "approved"},
+    ).status_code == 200
+    assert client.delete(
+        f"/notices/{approved['id']}/faculty",
+        headers=faculty_headers,
+    ).status_code == 409
 
 
 def test_legacy_password_hash_upgrades_after_login(client):

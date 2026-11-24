@@ -58,6 +58,8 @@ def init_db():
                 status TEXT NOT NULL,
                 deadline TEXT,
                 rejection_reason TEXT,
+                file_name TEXT,
+                file_size INTEGER,
                 created_at TEXT,
                 FOREIGN KEY (uploaded_by) REFERENCES users(id)
             )
@@ -69,6 +71,8 @@ def init_db():
         _add_column_if_missing(conn, "users", "semester", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "notices", "deadline", "TEXT")
         _add_column_if_missing(conn, "notices", "rejection_reason", "TEXT")
+        _add_column_if_missing(conn, "notices", "file_name", "TEXT")
+        _add_column_if_missing(conn, "notices", "file_size", "INTEGER")
         _add_column_if_missing(conn, "notices", "created_at", "TEXT")
         conn.execute(
             "UPDATE notices SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"

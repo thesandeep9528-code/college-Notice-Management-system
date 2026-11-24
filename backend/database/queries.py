@@ -6,7 +6,17 @@ from .connection import db_session
 
 
 USER_FIELDS = {"email", "name", "department", "semester", "role", "active", "password"}
-NOTICE_FIELDS = {"title", "description", "category", "department", "semester", "deadline"}
+NOTICE_FIELDS = {
+    "title",
+    "description",
+    "category",
+    "department",
+    "semester",
+    "deadline",
+    "file_path",
+    "file_name",
+    "file_size",
+}
 NOTICE_STATUSES = {"pending", "approved", "rejected"}
 
 
@@ -133,15 +143,17 @@ def add_notice(
     uploaded_by=None,
     status="pending",
     deadline=None,
+    file_name=None,
+    file_size=None,
 ) -> int:
     with db_session() as conn:
         cur = conn.execute(
             """
             INSERT INTO notices (
                 title, description, category, department, semester, file_path,
-                uploaded_by, status, deadline, created_at
+                uploaded_by, status, deadline, file_name, file_size, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 title.strip(),
@@ -153,6 +165,8 @@ def add_notice(
                 uploaded_by,
                 status,
                 deadline,
+                file_name,
+                file_size,
             ),
         )
         return cur.lastrowid
@@ -211,6 +225,23 @@ def update_notice(notice_id: int, updates: dict) -> bool:
     with db_session() as conn:
         cur = conn.execute(
             f"UPDATE notices SET {assignments} WHERE id = ?",
+            values,
+        )
+        return cur.rowcount > 0
+
+
+def resubmit_notice(notice_id: int, updates: dict) -> bool:
+    if not updates or not set(updates).issubset(NOTICE_FIELDS):
+        raise ValueError("Invalid notice fields")
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    values = list(updates.values()) + [notice_id]
+    with db_session() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE notices
+            SET {assignments}, status = 'pending', rejection_reason = NULL
+            WHERE id = ? AND status = 'rejected'
+            """,
             values,
         )
         return cur.rowcount > 0
@@ -278,12 +309,17 @@ def get_recent_activity(limit: int = 8):
         return [dict(row) for row in rows]
 
 
-def get_notice_counts():
+def get_notice_counts(uploaded_by: Optional[int] = None):
     counts = {status: 0 for status in NOTICE_STATUSES}
+    where_clause = " WHERE uploaded_by = ?" if uploaded_by is not None else ""
+    params = (uploaded_by,) if uploaded_by is not None else ()
     with db_session() as conn:
-        counts["total"] = conn.execute("SELECT COUNT(*) FROM notices").fetchone()[0]
+        counts["total"] = conn.execute(
+            f"SELECT COUNT(*) FROM notices{where_clause}", params
+        ).fetchone()[0]
         for row in conn.execute(
-            "SELECT status, COUNT(*) AS count FROM notices GROUP BY status"
+            f"SELECT status, COUNT(*) AS count FROM notices{where_clause} GROUP BY status",
+            params,
         ):
             if row["status"] in counts:
                 counts[row["status"]] = row["count"]

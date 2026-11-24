@@ -8,10 +8,11 @@ const DEPARTMENT_OPTIONS = ['Computer Science', 'Information Technology', 'Elect
 const SEMESTER_OPTIONS = ['1', '2', '3', '4', '5', '6', '7', '8'];
 
 async function apiRequest(path, token, options = {}) {
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
@@ -21,6 +22,43 @@ async function apiRequest(path, token, options = {}) {
     throw new Error(payload.detail || `Request failed (${response.status})`);
   }
   return payload;
+}
+
+function uploadFormData(path, token, body, onProgress, method = 'POST') {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open(method, `${API_BASE}${path}`);
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+    });
+    request.addEventListener('load', () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(request.responseText);
+      } catch {
+        payload = {};
+      }
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(payload.detail || `Request failed (${request.status})`));
+        return;
+      }
+      resolve(payload);
+    });
+    request.addEventListener('error', () => reject(new Error('Network error while uploading the notice')));
+    request.send(body);
+  });
+}
+
+async function fetchNoticePdf(noticeId, token, download = false) {
+  const response = await fetch(`${API_BASE}/notices/${noticeId}/file${download ? '?download=true' : ''}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || `Request failed (${response.status})`);
+  }
+  return response.blob();
 }
 
 function Icon({ name, size = 19 }) {
@@ -64,15 +102,13 @@ function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [page, setPage] = useState('home');
-  const [noticeForm, setNoticeForm] = useState(EMPTY_NOTICE);
-  const [createdNotice, setCreatedNotice] = useState(null);
   const [loginBusy, setLoginBusy] = useState(false);
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
 
-  const notify = useCallback((message) => {
-    setToast(message);
-    window.setTimeout(() => setToast(''), 3500);
+  const notify = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+    window.setTimeout(() => setToast(null), 3500);
   }, []);
 
   const logout = useCallback(() => {
@@ -151,7 +187,7 @@ function App() {
   const navigation = role === 'student'
     ? [{ key: 'home', title: 'Notice board', icon: 'grid' }, { key: 'assistant', title: 'Ask the assistant', icon: 'spark' }]
     : role === 'faculty'
-      ? [{ key: 'home', title: 'My workspace', icon: 'grid' }, { key: 'create', title: 'Create a notice', icon: 'plus' }]
+      ? [{ key: 'home', title: 'My workspace', icon: 'grid' }, { key: 'my-notices', title: 'My notices', icon: 'file' }, { key: 'create', title: 'Create a notice', icon: 'plus' }]
       : [{ key: 'home', title: 'Overview', icon: 'grid' }, { key: 'notices', title: 'All notices', icon: 'file' }, { key: 'approvals', title: 'Notice approvals', icon: 'check' }, { key: 'users', title: 'People & access', icon: 'users' }];
 
   const roleTitle = { student: 'Student', faculty: 'Faculty', admin: 'Administrator' }[role] || role;
@@ -191,11 +227,11 @@ function App() {
         </header>
         <div className="page-content">
           {role === 'student' && <StudentWorkspace page={page} setPage={setPage} token={token} />}
-          {role === 'faculty' && <FacultyWorkspace page={page} setPage={setPage} token={token} user={user} noticeForm={noticeForm} setNoticeForm={setNoticeForm} createdNotice={createdNotice} setCreatedNotice={setCreatedNotice} notify={notify} />}
+          {role === 'faculty' && <FacultyWorkspace page={page} setPage={setPage} token={token} notify={notify} />}
           {role === 'admin' && <AdminWorkspace page={page} setPage={setPage} token={token} user={user} notify={notify} />}
         </div>
       </main>
-      {toast && <div className="toast" role="status"><span className="toast-check"><Icon name="check" size={15} /></span>{toast}</div>}
+      {toast && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`} role={toast.type === 'error' ? 'alert' : 'status'}><span className={toast.type === 'error' ? 'toast-error-icon' : 'toast-check'}><Icon name={toast.type === 'error' ? 'close' : 'check'} size={15} /></span>{toast.message}</div>}
     </div>
   );
 }
@@ -213,7 +249,7 @@ function StatCard({ icon, label, value, note, tone }) {
   return <article className="stat-card"><span className={`stat-icon ${tone}`}><Icon name={icon} size={20} /></span><div className="stat-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
-function NoticeCard({ notice, admin = false, actionBusy = false, onApprove, onReject, onView, onDelete }) {
+function NoticeCard({ notice, admin = false, faculty = false, actionBusy = false, onApprove, onReject, onView, onDelete, onEdit, onPreview }) {
   const category = notice.category || 'Campus update';
   return (
     <article className="notice-card">
@@ -223,11 +259,18 @@ function NoticeCard({ notice, admin = false, actionBusy = false, onApprove, onRe
       <div className="notice-meta">
         {notice.department && <span><Icon name="building" size={15} />{notice.department}</span>}
         {notice.semester && <span><Icon name="file" size={15} />Semester {notice.semester}</span>}
+        {notice.deadline && <span><Icon name="calendar" size={15} />Due {notice.deadline}</span>}
       </div>
+      {faculty && notice.rejection_reason && <p className="notice-rejection-reason"><strong>Admin feedback:</strong> {notice.rejection_reason}</p>}
       {admin && <div className="notice-actions">
         {notice.status === 'pending' && <><button className="button button-approve" disabled={actionBusy} onClick={() => onApprove(notice.id)}><Icon name="check" size={16} /> Approve</button><button className="button button-reject" disabled={actionBusy} onClick={() => onReject(notice.id)}><Icon name="close" size={16} /> Reject</button></>}
         {onView && <button className="button button-soft" onClick={() => onView(notice)}>Details</button>}
         {onDelete && <button className="button button-reject" disabled={actionBusy} onClick={() => onDelete(notice)}>Delete</button>}
+      </div>}
+      {faculty && ((notice.has_file && onPreview) || (notice.status === 'rejected' && onEdit) || (['pending', 'rejected'].includes(notice.status) && onDelete)) && <div className="notice-actions">
+        {notice.has_file && onPreview && <button className="button button-soft" onClick={() => onPreview(notice)}>Preview PDF</button>}
+        {notice.status === 'rejected' && onEdit && <button className="button button-soft" onClick={() => onEdit(notice)}>Edit & resubmit</button>}
+        {['pending', 'rejected'].includes(notice.status) && onDelete && <button className="button button-reject" disabled={actionBusy} onClick={() => onDelete(notice)}>Delete</button>}
       </div>}
     </article>
   );
@@ -235,6 +278,19 @@ function NoticeCard({ notice, admin = false, actionBusy = false, onApprove, onRe
 
 function EmptyState({ icon = 'file', title, description, action }) {
   return <div className="empty-state"><span className="empty-icon"><Icon name={icon} size={24} /></span><h3>{title}</h3><p>{description}</p>{action}</div>;
+}
+
+function PdfPreviewDialog({ preview, onClose }) {
+  if (!preview) return null;
+  return (
+    <div className="modal-backdrop">
+      <section className="pdf-preview-modal" role="dialog" aria-modal="true" aria-labelledby="pdf-preview-title">
+        <div className="modal-heading"><div><span className="eyebrow">NOTICE ATTACHMENT</span><h2 id="pdf-preview-title">{preview.filename}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close PDF preview"><Icon name="close" /></button></div>
+        <iframe title={`Preview of ${preview.filename}`} src={preview.url} />
+        <div className="modal-actions"><a className="button button-primary" href={preview.url} download={preview.filename}>Download PDF</a><button className="button button-soft" onClick={onClose}>Close</button></div>
+      </section>
+    </div>
+  );
 }
 
 function StudentWorkspace({ page, setPage, token }) {
@@ -319,53 +375,269 @@ function StudentWorkspace({ page, setPage, token }) {
   );
 }
 
-function FacultyWorkspace({ page, setPage, token, user, noticeForm, setNoticeForm, createdNotice, setCreatedNotice, notify }) {
+function FacultyWorkspace({ page, setPage, token, notify }) {
+  const [noticeForm, setNoticeForm] = useState(EMPTY_NOTICE);
+  const [editingNotice, setEditingNotice] = useState(null);
+  const [selectedPdf, setSelectedPdf] = useState(null);
+  const [selectedPdfUrl, setSelectedPdfUrl] = useState('');
+  const [pdfPreview, setPdfPreview] = useState(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [formError, setFormError] = useState('');
+  const [fileError, setFileError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [dashboard, setDashboard] = useState(null);
+  const [dashboardError, setDashboardError] = useState('');
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [notices, setNotices] = useState([]);
+  const [noticeError, setNoticeError] = useState('');
+  const [noticesLoading, setNoticesLoading] = useState(true);
+  const [filters, setFilters] = useState({ search: '', status: '', category: '' });
+  const [busyNoticeId, setBusyNoticeId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (page !== 'home') return undefined;
+    let active = true;
+    setDashboardLoading(true);
+    setDashboardError('');
+    apiRequest('/faculty/dashboard', token)
+      .then((data) => { if (active) setDashboard(data); })
+      .catch((error) => { if (active) setDashboardError(error.message); })
+      .finally(() => { if (active) setDashboardLoading(false); });
+    return () => { active = false; };
+  }, [page, refreshKey, token]);
+
+  useEffect(() => {
+    if (page !== 'my-notices') return undefined;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setNoticesLoading(true);
+      setNoticeError('');
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+      apiRequest(`/notices?${params.toString()}`, token)
+        .then((data) => { if (active) setNotices(data); })
+        .catch((error) => { if (active) setNoticeError(error.message); })
+        .finally(() => { if (active) setNoticesLoading(false); });
+    }, 160);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [filters, page, refreshKey, token]);
+
+  useEffect(() => {
+    if (!selectedPdf) {
+      setSelectedPdfUrl('');
+      return undefined;
+    }
+    const url = URL.createObjectURL(selectedPdf);
+    setSelectedPdfUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedPdf]);
+
+  useEffect(() => {
+    if (page !== 'create' && editingNotice) {
+      setEditingNotice(null);
+      setNoticeForm(EMPTY_NOTICE);
+      setSelectedPdf(null);
+      setFileError('');
+      setFormError('');
+    }
+  }, [editingNotice, page]);
+
+  useEffect(() => () => {
+    if (pdfPreview) URL.revokeObjectURL(pdfPreview.url);
+  }, [pdfPreview]);
+
+  const updateForm = (key, value) => setNoticeForm((current) => ({ ...current, [key]: value }));
+
+  const selectPdf = (event) => {
+    const file = event.target.files && event.target.files[0];
+    setFileError('');
+    if (!file) {
+      setSelectedPdf(null);
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.pdf') || (file.type && !['application/pdf', 'application/octet-stream'].includes(file.type))) {
+      setFileError('Choose a PDF file.');
+      event.target.value = '';
+      setSelectedPdf(null);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setFileError('The PDF must be 10 MiB or smaller.');
+      event.target.value = '';
+      setSelectedPdf(null);
+      return;
+    }
+    setSelectedPdf(file);
+  };
+
+  const openPdfPreview = async (notice) => {
+    try {
+      const blob = await fetchNoticePdf(notice.id, token);
+      setPdfPreview({
+        url: URL.createObjectURL(blob),
+        filename: notice.file_name || `${notice.title}.pdf`,
+      });
+    } catch (error) {
+      notify(error.message, 'error');
+    }
+  };
+
+  const editNotice = (notice) => {
+    setNoticeForm({
+      title: notice.title || '',
+      description: notice.description || '',
+      category: notice.category || '',
+      department: notice.department || '',
+      semester: notice.semester || '',
+      deadline: notice.deadline || '',
+    });
+    setEditingNotice(notice);
+    setSelectedPdf(null);
+    setFileError('');
+    setFormError('');
+    setFileInputKey((current) => current + 1);
+    setPage('create');
+  };
 
   const submitNotice = async (event) => {
     event.preventDefault();
+    if (!noticeForm.title.trim()) {
+      setFormError('A notice title is required.');
+      return;
+    }
     setSubmitting(true);
+    setFormError('');
+    setUploadProgress(selectedPdf ? 0 : null);
     try {
-      const result = await apiRequest('/notices', token, {
-        method: 'POST',
-        body: JSON.stringify({ ...noticeForm, uploaded_by: user.id }),
-      });
-      setCreatedNotice({ ...noticeForm, id: result.id, status: 'pending' });
+      if (editingNotice || selectedPdf) {
+        const body = new FormData();
+        Object.entries(noticeForm).forEach(([key, value]) => body.append(key, value));
+        if (selectedPdf) body.append('pdf', selectedPdf);
+        const path = editingNotice ? `/notices/${editingNotice.id}/resubmit` : '/notices/upload';
+        await uploadFormData(path, token, body, (progress) => {
+          if (selectedPdf) setUploadProgress(progress);
+        }, editingNotice ? 'PUT' : 'POST');
+      } else {
+        await apiRequest('/notices', token, {
+          method: 'POST',
+          body: JSON.stringify(noticeForm),
+        });
+      }
       setNoticeForm(EMPTY_NOTICE);
+      setEditingNotice(null);
+      setSelectedPdf(null);
+      setFileError('');
+      setFileInputKey((current) => current + 1);
+      setRefreshKey((current) => current + 1);
+      setPage('my-notices');
       notify('Notice submitted for admin review.');
-      setPage('home');
     } catch (error) {
-      notify(error.message);
+      setFormError(error.message);
+      notify(error.message, 'error');
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const deleteNotice = async (notice) => {
+    if (!window.confirm(`Delete "${notice.title}"? This cannot be undone.`)) return;
+    setBusyNoticeId(notice.id);
+    try {
+      await apiRequest(`/notices/${notice.id}/faculty`, token, { method: 'DELETE' });
+      setRefreshKey((current) => current + 1);
+      notify('Notice deleted.');
+    } catch (error) {
+      notify(error.message, 'error');
+    } finally {
+      setBusyNoticeId(null);
     }
   };
 
   if (page === 'create') {
     return (
       <div className="faculty-create-page">
-        <PageHeading eyebrow="SHARE WITH YOUR CAMPUS" title="Create a notice" description="Add a clear announcement. An administrator will review it before students can see it." />
+        <PageHeading
+          eyebrow={editingNotice ? 'UPDATE YOUR SUBMISSION' : 'SHARE WITH YOUR CAMPUS'}
+          title={editingNotice ? 'Edit and resubmit' : 'Create a notice'}
+          description="Add a clear announcement. An administrator will review it before students can see it."
+          action={<button className="button button-soft" onClick={() => setPage(editingNotice ? 'my-notices' : 'home')}>Cancel</button>}
+        />
         <div className="form-layout">
           <form className="notice-form-card" onSubmit={submitNotice}>
-            <div className="form-section-heading"><span className="form-section-icon"><Icon name="file" /></span><div><h2>Notice details</h2><p>Fields marked with * are required.</p></div></div>
-            <label htmlFor="notice-title">Notice title <span>*</span></label><input id="notice-title" className="form-control" maxLength="255" placeholder="e.g. Mid-semester examination schedule" value={noticeForm.title} onChange={(event) => setNoticeForm({ ...noticeForm, title: event.target.value })} required />
-            <label htmlFor="notice-description">Description</label><textarea id="notice-description" className="form-control" rows="5" placeholder="Share the key details students need to know…" value={noticeForm.description} onChange={(event) => setNoticeForm({ ...noticeForm, description: event.target.value })} />
-            <div className="form-row"><div><label htmlFor="notice-category">Category</label><select id="notice-category" className="form-control" value={noticeForm.category} onChange={(event) => setNoticeForm({ ...noticeForm, category: event.target.value })}><option value="">Choose category</option>{CATEGORY_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select></div><div><label htmlFor="notice-department">Department</label><select id="notice-department" className="form-control" value={noticeForm.department} onChange={(event) => setNoticeForm({ ...noticeForm, department: event.target.value })}><option value="">Choose department</option>{DEPARTMENT_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select></div></div>
-            <label htmlFor="notice-semester">Semester <span className="label-optional">OPTIONAL</span></label><select id="notice-semester" className="form-control" value={noticeForm.semester} onChange={(event) => setNoticeForm({ ...noticeForm, semester: event.target.value })}><option value="">All semesters</option>{SEMESTER_OPTIONS.map((item) => <option key={item} value={item}>Semester {item}</option>)}</select>
-            <div className="submit-notice-row"><span><Icon name="shield" size={15} /> Submitted notices need admin approval.</span><button className="button button-primary" disabled={submitting || !noticeForm.title.trim()}>{submitting ? 'Submitting…' : <>Submit for review <Icon name="arrow" size={16} /></>}</button></div>
+            <div className="form-section-heading"><span className="form-section-icon"><Icon name="file" /></span><div><h2>Notice details</h2><p>Fields marked with * are required. PDF attachments are optional (10 MiB max).</p></div></div>
+            <label htmlFor="notice-title">Notice title <span>*</span></label>
+            <input id="notice-title" className="form-control" maxLength="255" placeholder="e.g. Mid-semester examination schedule" value={noticeForm.title} onChange={(event) => updateForm('title', event.target.value)} required />
+            <label htmlFor="notice-description">Description</label>
+            <textarea id="notice-description" className="form-control" rows="5" maxLength="10000" placeholder="Share the key details students need to know…" value={noticeForm.description} onChange={(event) => updateForm('description', event.target.value)} />
+            <div className="form-row">
+              <div><label htmlFor="notice-category">Category</label><select id="notice-category" className="form-control" value={noticeForm.category} onChange={(event) => updateForm('category', event.target.value)}><option value="">Choose category</option>{CATEGORY_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select></div>
+              <div><label htmlFor="notice-department">Department</label><select id="notice-department" className="form-control" value={noticeForm.department} onChange={(event) => updateForm('department', event.target.value)}><option value="">Choose department</option>{DEPARTMENT_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select></div>
+            </div>
+            <div className="form-row">
+              <div><label htmlFor="notice-semester">Semester <span className="label-optional">OPTIONAL</span></label><select id="notice-semester" className="form-control" value={noticeForm.semester} onChange={(event) => updateForm('semester', event.target.value)}><option value="">All semesters</option>{SEMESTER_OPTIONS.map((item) => <option key={item} value={item}>Semester {item}</option>)}</select></div>
+              <div><label htmlFor="notice-deadline">Deadline <span className="label-optional">OPTIONAL</span></label><input id="notice-deadline" type="date" className="form-control" value={noticeForm.deadline || ''} onChange={(event) => updateForm('deadline', event.target.value)} /></div>
+            </div>
+            <label htmlFor="notice-pdf">Attach a PDF <span className="label-optional">OPTIONAL</span></label>
+            <input key={fileInputKey} id="notice-pdf" className="form-control" type="file" accept="application/pdf,.pdf" onChange={selectPdf} />
+            {editingNotice && <p className="file-help">Leave the attachment empty to keep the current PDF.</p>}
+            {fileError && <p className="form-error" role="alert">{fileError}</p>}
+            {selectedPdf && selectedPdfUrl && <div className="selected-pdf-preview"><div><strong>{selectedPdf.name}</strong><button className="text-button" type="button" onClick={() => { setSelectedPdf(null); setFileInputKey((current) => current + 1); }}>Remove PDF</button></div><iframe title="Selected PDF preview" src={selectedPdfUrl} /></div>}
+            {uploadProgress !== null && <div className="upload-progress" role="status"><span>Uploading PDF… {uploadProgress}%</span><progress max="100" value={uploadProgress} /></div>}
+            {formError && <div className="inline-error" role="alert">{formError}</div>}
+            <div className="submit-notice-row"><span><Icon name="shield" size={15} /> Submitted notices need admin approval.</span><button className="button button-primary" disabled={submitting || !noticeForm.title.trim() || Boolean(fileError)}>{submitting ? uploadProgress !== null ? `Uploading ${uploadProgress}%…` : 'Submitting…' : editingNotice ? 'Resubmit for review' : 'Submit for review'}</button></div>
           </form>
           <aside className="form-aside"><span className="aside-spark"><Icon name="spark" size={20} /></span><h3>Make it easy to scan.</h3><p>A helpful title and a few clear details make it easier for students to find the information that matters.</p><div className="review-steps"><div><span>01</span><p><b>You submit</b><small>Your notice enters the review queue.</small></p></div><div><span>02</span><p><b>Admin reviews</b><small>The campus admin checks the details.</small></p></div><div><span>03</span><p><b>Students see it</b><small>Approved notices appear on the board.</small></p></div></div></aside>
         </div>
+        <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
       </div>
+    );
+  }
+
+  if (page === 'my-notices') {
+    const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+    const clearFilters = () => setFilters({ search: '', status: '', category: '' });
+    const hasFilters = Object.values(filters).some(Boolean);
+    return (
+      <>
+      <div className="faculty-page">
+        <PageHeading eyebrow="YOUR SUBMISSIONS" title="My notices" description="Track review status, respond to feedback, and manage your submissions." action={<button className="button button-primary" onClick={() => { setEditingNotice(null); setNoticeForm(EMPTY_NOTICE); setPage('create'); }}><Icon name="plus" size={17} /> Create a notice</button>} />
+        <div className="filter-toolbar faculty-filter-toolbar">
+          <label className="search-field"><Icon name="search" size={18} /><input aria-label="Search my notices" placeholder="Search my notices…" value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} /></label>
+          <select aria-label="Filter my notices by status" value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}><option value="">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+          <select aria-label="Filter my notices by category" value={filters.category} onChange={(event) => updateFilter('category', event.target.value)}><option value="">All categories</option>{CATEGORY_OPTIONS.map((item) => <option key={item}>{item}</option>)}</select>
+          {hasFilters && <button className="clear-filters" onClick={clearFilters}>Clear filters</button>}
+        </div>
+        {noticeError && <div className="inline-error" role="alert">{noticeError}</div>}
+        {noticesLoading ? <div className="notice-grid">{[1, 2, 3].map((item) => <div key={item} className="skeleton-card" />)}</div>
+          : notices.length ? <div className="notice-grid">{notices.map((notice) => <NoticeCard key={notice.id} notice={notice} faculty actionBusy={busyNoticeId === notice.id} onPreview={openPdfPreview} onEdit={editNotice} onDelete={deleteNotice} />)}</div>
+            : <EmptyState icon={hasFilters ? 'search' : 'file'} title={hasFilters ? 'No matching notices' : 'No submissions yet'} description={hasFilters ? 'Try another search or status filter.' : 'Create your first notice and track its review here.'} action={<button className="text-button" onClick={() => { setEditingNotice(null); setNoticeForm(EMPTY_NOTICE); setPage('create'); }}>Create a notice <Icon name="arrow" size={15} /></button>} />}
+      </div>
+      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+      </>
     );
   }
 
   return (
     <div className="faculty-page">
-      <PageHeading eyebrow="FACULTY WORKSPACE" title={<>Good morning.<br className="desktop-break" /> Let’s keep students informed.</>} description="Share timely campus information with the people who need it." action={<button className="button button-primary" onClick={() => setPage('create')}><Icon name="plus" size={17} /> Create a notice</button>} />
-      <section className="faculty-banner"><span className="faculty-banner-icon"><Icon name="file" size={22} /></span><div><span className="eyebrow">NOTICE PUBLISHING</span><h2>From your desk to the notice board.</h2><p>Submit an announcement and it’ll be shared with students after admin review.</p></div><button className="banner-arrow" onClick={() => setPage('create')} aria-label="Create a notice"><Icon name="arrow" /></button></section>
-      <div className="faculty-info-grid"><article className="info-card"><span className="info-number">01</span><span className="info-icon info-indigo"><Icon name="plus" /></span><h3>Create a notice</h3><p>Add the announcement, choose a category, and select the students it applies to.</p><button className="text-button" onClick={() => setPage('create')}>Start a notice <Icon name="arrow" size={15} /></button></article><article className="info-card"><span className="info-number">02</span><span className="info-icon info-amber"><Icon name="shield" /></span><h3>Admin review</h3><p>Every submission is checked before it goes live on the student notice board.</p><span className="info-footnote">Keeps campus updates trusted</span></article><article className="info-card"><span className="info-number">03</span><span className="info-icon info-green"><Icon name="bell" /></span><h3>Reach your campus</h3><p>Once approved, students can search and filter the notice by department and semester.</p><span className="info-footnote">Visible to relevant students</span></article></div>
-      {createdNotice && <section className="recent-submission"><div className="section-title-row"><div><span className="eyebrow">JUST SUBMITTED</span><h2>Your latest notice</h2></div><span className="status-pill status-pending">Pending review</span></div><NoticeCard notice={createdNotice} /></section>}
+      <PageHeading eyebrow="FACULTY WORKSPACE" title={<>Good morning.<br className="desktop-break" /> Let’s keep students informed.</>} description="Share timely campus information with the people who need it." action={<button className="button button-primary" onClick={() => { setEditingNotice(null); setNoticeForm(EMPTY_NOTICE); setPage('create'); }}><Icon name="plus" size={17} /> Create a notice</button>} />
+      {dashboardError && <div className="inline-error" role="alert">{dashboardError}</div>}
+      {dashboardLoading ? <div className="notice-grid">{[1, 2, 3, 4].map((item) => <div key={item} className="skeleton-card" />)}</div> : <>
+        <div className="stats-grid faculty-stats-grid">
+          <StatCard icon="file" label="Total notices" value={dashboard?.total || 0} note="Your submissions" tone="stat-indigo" />
+          <StatCard icon="check" label="Approved" value={dashboard?.approved || 0} note="Published for students" tone="stat-green" />
+          <StatCard icon="calendar" label="Pending review" value={dashboard?.pending || 0} note="Awaiting admin review" tone="stat-amber" />
+          <StatCard icon="close" label="Rejected" value={dashboard?.rejected || 0} note="Feedback available" tone="stat-rose" />
+        </div>
+        <section className="notice-section faculty-recent-section">
+          <div className="section-title-row"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recently uploaded</h2></div><button className="text-button" onClick={() => setPage('my-notices')}>View all <Icon name="arrow" size={15} /></button></div>
+          {dashboard?.recent_notices?.length ? <div className="notice-grid">{dashboard.recent_notices.map((notice) => <NoticeCard key={notice.id} notice={notice} faculty onPreview={openPdfPreview} />)}</div>
+            : <EmptyState icon="file" title="No submissions yet" description="Your latest notices and their approval status will appear here." action={<button className="text-button" onClick={() => setPage('create')}>Create a notice <Icon name="arrow" size={15} /></button>} />}
+        </section>
+      </>}
+      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

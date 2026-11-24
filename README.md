@@ -1,6 +1,6 @@
 # AI‑Powered College Notice Intelligence System ✨
 
-A lightweight **React** web app for managing college notices and browsing approved announcements. Students can search by keywords and filters. PDF upload and a live Retrieval-Augmented Generation (RAG) assistant remain future work.
+A lightweight **React** web app for managing college notices and browsing approved announcements. Faculty can attach PDFs to notices, while students can search approved updates. A live Retrieval-Augmented Generation (RAG) assistant remains future work.
 
 ---
 
@@ -29,7 +29,7 @@ The system is built for a **single college** and provides three user roles:
 | Role | Capabilities |
 |------|--------------|
 | **Student** | View only **approved** notices, search, filter, and ask RAG‑based questions. |
-| **Faculty** | Submit text notices for review; a dedicated submissions-management and PDF-upload workflow remains future work. |
+| **Faculty** | Submit notices with optional PDFs, track status, edit/resubmit rejected notices, and delete their own pending or rejected submissions. |
 | **Admin** | Manage users, activate/deactivate accounts, approve/reject notices, and view activity logs. |
 
 All role‑based restrictions are enforced **server‑side** (see `backend/main.py`).
@@ -39,7 +39,7 @@ All role‑based restrictions are enforced **server‑side** (see `backend/main.
 ## Key Features
 | ✅ | Feature |
 |---|---------|
-| 📄 | Faculty can add a new notice (title, description, category, department, semester). |
+| 📄 | Faculty can submit notices with metadata, deadlines, and optional PDFs (10 MiB limit), then track and manage permitted submissions. |
 | ✅ | Admin can **approve**, **reject** or **delete** notices. |
 | 📊 | Admin dashboard shows student/faculty totals, notice status counts, and recent audited actions. |
 | 🔍 | Students can **search** by title/description, filter by category, department & semester. |
@@ -61,7 +61,7 @@ Student  ──► Search/Filter ► View Approved Notices
 ```text
 Faculty  ──► Create Notice ► Save (status = pending)
                │
-               └─► (Upload placeholder – real PDF upload to be added)
+               └─► Optional PDF attachment is stored privately and served through an authorized API
 ```
 ```text
 Admin    ──► Review Pending Notices ► Approve / Reject
@@ -101,7 +101,7 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ---
 
 ## AI Notice Assistant
-The current React app calls `backend/services/rag.py`, which returns a placeholder response. The separate top-level `services/notice_embedding.py` and PDF processing modules are prototypes; they are not yet connected to the active API flow. Live retrieval, grounded answers, citations, and PDF upload are planned work.
+The current React app calls `backend/services/rag.py`, which returns a placeholder response. Faculty PDF attachments are stored and served through role-checked API routes, but text extraction and the separate top-level `services/notice_embedding.py` pipeline are not connected to the active API flow. Live retrieval, grounded answers, and citations remain planned work.
 
 > **Diagram:** *PDF Processing & RAG Pipeline*  
 > ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png)
@@ -191,6 +191,7 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 | `APP_ENV` | Set to `production` to require `AUTH_SECRET_KEY`. | `production` |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins. Defaults to local React development origins. | `https://notices.example.edu` |
 | `REACT_APP_API_URL` | Optional frontend API base URL; defaults to `http://127.0.0.1:8000`. | `https://api.example.edu` |
+| `NOTICE_UPLOAD_DIR` | Optional directory for private notice PDF storage. Defaults to `backend/uploads/notices`; use persistent storage in deployments. | `D:\notice-data\pdfs` |
 | `OPENAI_API_KEY` | Reserved for the future RAG integration; the current active `/rag` implementation does not use it. | Set only when integrating RAG |
 
 The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.

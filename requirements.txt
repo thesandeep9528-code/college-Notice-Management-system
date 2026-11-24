@@ -3,5 +3,6 @@ psycopg2-binary
 pytest
 passlib[bcrypt]
 PyPDF2
+python-multipart
 openai
 chromadb

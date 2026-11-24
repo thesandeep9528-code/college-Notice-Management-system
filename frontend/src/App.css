@@ -230,6 +230,16 @@ textarea.form-control { resize: vertical; line-height: 1.6; }
 .review-steps p { display: grid; gap: 3px; margin: 0; }
 .review-steps b { color: #4d5270; font-size: 10px; }
 .review-steps small { color: #9298ab; font-size: 9px; line-height: 1.5; }
+.faculty-recent-section { margin-top: 26px; }
+.notice-rejection-reason { margin: 11px 0 0; padding: 9px 10px; border-left: 3px solid #d87c83; border-radius: 4px; color: #9c4b53; background: #fff6f6; font-size: 10px; line-height: 1.6; }
+.notice-rejection-reason strong { font-weight: 700; }
+.file-help { margin: -3px 0 0; color: #8d93a7; font-size: 9px; }
+.selected-pdf-preview { display: grid; gap: 8px; padding: 10px; border: 1px solid #e8e9f0; border-radius: 8px; background: #fafaff; }
+.selected-pdf-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.selected-pdf-preview strong { overflow: hidden; color: #596078; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.selected-pdf-preview iframe { width: 100%; height: 330px; border: 1px solid #e5e6ed; border-radius: 5px; background: #fff; }
+.upload-progress { display: grid; gap: 7px; color: #676d85; font-size: 10px; }
+.upload-progress progress { width: 100%; height: 8px; accent-color: #655bd5; }
 
 /* Admin */
 .admin-banner { position: relative; display: flex; align-items: center; justify-content: space-between; overflow: hidden; min-height: 156px; padding: 24px 28px; border: 1px solid #e6e5fa; border-radius: 11px; background: linear-gradient(110deg, #f0efff, #f8f7ff 72%, #f0f2ff); }
@@ -243,6 +253,7 @@ textarea.form-control { resize: vertical; line-height: 1.6; }
 .stat-cyan { color: #3392a5; background: #e8f6f8; }
 .stat-green { color: #348f70; background: #e9f7f0; }
 .stat-amber { color: #b8832b; background: #fff4df; }
+.stat-rose { color: #b95660; background: #fff0f1; }
 .stat-copy { display: grid; min-width: 0; gap: 3px; }
 .stat-copy > span { overflow: hidden; color: #83899e; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .stat-copy > strong { color: #2d3250; font-family: Manrope, sans-serif; font-size: 23px; line-height: 1.2; }
@@ -325,9 +336,14 @@ textarea.form-control { resize: vertical; line-height: 1.6; }
 .notice-edit-form { display: grid; gap: 8px; }
 .notice-edit-form label, .detail-modal label { margin-top: 5px; color: #424863; font-size: 11px; font-weight: 700; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.pdf-preview-modal { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(980px, 100%); height: min(90vh, 850px); padding: 20px; border: 1px solid #e8e9f0; border-radius: 12px; background: #fff; box-shadow: 0 20px 60px rgba(27,30,61,.2); }
+.pdf-preview-modal .modal-heading { margin-bottom: 12px; }
+.pdf-preview-modal iframe { width: 100%; min-height: 0; border: 1px solid #e5e6ed; border-radius: 6px; background: #f7f7fa; }
 .loading-row { padding: 18px 5px; color: #9096aa; font-size: 10px; }
 .toast { position: fixed; z-index: 20; right: 24px; bottom: 22px; display: flex; align-items: center; gap: 9px; max-width: min(420px, calc(100vw - 32px)); padding: 12px 16px 12px 12px; border: 1px solid #e6e7ef; border-radius: 9px; color: #4f556f; background: #fff; box-shadow: 0 8px 26px rgba(31,35,67,.13); font-size: 11px; animation: toast-in .22s ease-out; }
 .toast-check { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 7px; color: #318363; background: #e7f6ee; }
+.toast-error { border-color: #f0d7d9; color: #9c4b53; }
+.toast-error-icon { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 7px; color: #b95660; background: #fff0f1; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .nav-backdrop { display: none; }
 
@@ -377,6 +393,8 @@ textarea.form-control { resize: vertical; line-height: 1.6; }
   .info-card p { min-height: 0; }
   .info-footnote { margin-top: 8px; }
   .form-layout, .people-layout { grid-template-columns: 1fr; }
+  .pdf-preview-modal { height: 88vh; padding: 14px; }
+  .selected-pdf-preview iframe { height: 240px; }
   .form-aside { order: -1; }
   .review-steps { grid-template-columns: repeat(3, 1fr); gap: 9px; }
   .review-steps > div { gap: 6px; }

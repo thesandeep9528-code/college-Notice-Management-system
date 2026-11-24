@@ -105,4 +105,6 @@ def test_schema_upgrade_preserves_existing_users_and_notices(tmp_path, monkeypat
     assert existing_user["email"] == "existing@example.edu"
     assert existing_notice["title"] == "Existing notice"
     assert existing_notice["rejection_reason"] is None
+    assert existing_notice["file_name"] is None
+    assert existing_notice["file_size"] is None
     assert existing_notice["created_at"]
