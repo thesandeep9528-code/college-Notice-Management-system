@@ -42,7 +42,7 @@ from .database.queries import (
     update_notice_status,
     update_user,
 )
-from .services.rag import answer_question
+from .services.rag_graph import answer_question
 
 
 load_dotenv()

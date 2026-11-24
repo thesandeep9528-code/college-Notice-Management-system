@@ -6,7 +6,7 @@
 - FastAPI API: `backend/main.py`.
 - Active database and schema initialization: `backend/database/connection.py`.
 - Active SQLite queries and audit events: `backend/database/queries.py`.
-- Active assistant implementation: `backend/services/rag.py` (local approved-notice retrieval with source excerpts and PDF page references).
+- Active assistant implementation: `backend/services/rag_graph.py` (typed LangGraph) and `backend/services/rag_index.py` (SQLite-approved content synchronization into Chroma).
 - Local database file: `backend/ai_notice.db`; schema startup performs additive changes only.
 
 The top-level `database/` and `services/` directories contain older or prototype implementations. The React app currently calls the `backend/` API and does not use the top-level PostgreSQL database.
@@ -41,8 +41,10 @@ The top-level `database/` and `services/` directories contain older or prototype
 ## Remaining role and product work
 
 - Student notice explorer supports search, category/department/semester filters, newest/oldest sorting, profile-relevant prioritization, upcoming deadlines, notice details, and role-checked PDF preview/download.
-- `/rag` is restricted to students and searches approved notice metadata, descriptions, and extractable PDF text locally. It returns matching excerpts with notice IDs and page numbers when sourced from a PDF. It does not call an external model or use the legacy ChromaDB/OpenAI prototype.
-- PDF files without extractable text can still be previewed/downloaded, but the assistant can only search their notice metadata and description.
+- `/rag` is restricted to students and preserves the existing `{question, answer, sources}` response shape. SQLite remains the source of truth for notice metadata and approval status. When `OPENAI_API_KEY` is configured, approved metadata and extracted PDF page text are synchronized into the existing Chroma `notice_chunks` collection, retrieved with OpenAI embeddings, and used by OpenAI answer generation. Chroma results are filtered against currently approved SQLite notice IDs.
+- The LangGraph workflow analyzes the question/history, retrieves and prepares context, generates an answer, evaluates citations/grounding, allows at most one retrieval retry, and returns sourced excerpts or a not-found response when generation is unavailable or ungrounded. Missing credentials or provider failures use the local SQLite/PDF retrieval path; tests mock the external providers and make no live API requests.
+- OpenAI configuration sends approved notice text for embeddings and sends the student question plus retrieved excerpts for answer generation; deployments must ensure this sharing is permitted. `OPENAI_CHAT_MODEL` defaults to `gpt-4o-mini`. Scanned PDFs without extractable text remain previewable/downloadable, but the active assistant does not OCR them.
+- `services/rag.py` remains a separate legacy Gemini flow and is not called by FastAPI. The active Chroma indexer uses the generated private PDF storage key and preserves page/notice metadata.
 - The legacy PostgreSQL implementation has not been consolidated or migrated; preserve it until its data and purpose are explicitly reconciled.
 
 ## Validation

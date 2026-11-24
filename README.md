@@ -93,8 +93,8 @@ Admin    ──► Review Pending Notices ► Approve / Reject
           ▲                                 │
           │                                 ▼
    ┌─────────────────────┐          ┌─────────────────────┐
-   │   OpenAI API        │          │   ChatGPT (gpt‑4‑turbo)│
-   │   (ChatGPT)         │          │   (Answer generation)│
+   │   OpenAI API        │          │   LangGraph            │
+   │   (Embeddings/LLM)  │          │   (RAG workflow)       │
    └─────────────────────┘          └─────────────────────┘
 ```
 > **Diagram:** *Overall System Architecture*  
@@ -103,7 +103,9 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ---
 
 ## AI Notice Assistant
-The active `/rag` endpoint searches only approved notices using their metadata, descriptions, and extractable text from stored PDFs. It returns matching excerpts and notice IDs, including page numbers for PDF matches. Retrieval runs locally without sending notice content to an external model; it does not generate or infer facts beyond the cited text. The separate top-level `services/notice_embedding.py` pipeline remains a prototype and is not used by the active API.
+The student-only `/rag` endpoint runs through a LangGraph workflow and keeps SQLite authoritative for notice metadata and approval status. When configured, it syncs approved notice metadata and extractable PDF page text into the existing Chroma collection, uses OpenAI embeddings for retrieval, and generates a source-cited answer with OpenAI. Results are checked against cited source text, with at most one retrieval retry. If OpenAI or Chroma credentials/services are unavailable, it falls back to local approved-notice retrieval and returns excerpts instead of an ungrounded generated answer. PDF text is extracted page-by-page with PyPDF2; scanned image-only PDFs are not OCR-processed by the active assistant.
+
+With `OPENAI_API_KEY` configured, approved notice text is sent to OpenAI for embeddings and retrieved excerpts plus the student question are sent for answer generation. Use this only where that data sharing is permitted. The top-level `services/rag.py` remains a separate legacy Gemini implementation and is not called by FastAPI.
 
 > **Diagram:** *PDF Processing & RAG Pipeline*  
 > ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png)
@@ -116,8 +118,9 @@ The active `/rag` endpoint searches only approved notices using their metadata, 
 | **UI** | **React** (JavaScript) | Front‑end built with Create‑React‑App (`react-scripts`). |
 | **Backend** | **FastAPI** (Python 3.12) | Core API lives in `backend/main.py`. |
 | **Database** | **SQLite** (via `sqlite3`) | Stores users, notices, and auto‑generated metadata. |
-| **Vector Store** | **Chromadb** (local SQLite) | Used only by older/prototype services, not by the active notice assistant. |
-| **LLM** | Not connected in the active backend | The notice assistant uses local keyword-based retrieval and quoted source excerpts. |
+| **Vector Store** | **ChromaDB** | Stores approved notice metadata and PDF text chunks for semantic retrieval. |
+| **LLM orchestration** | **LangGraph** | Typed state graph with bounded retries and source-grounded fallback. |
+| **Embeddings / answer generation** | **OpenAI API** | Optional; configured with `OPENAI_API_KEY`. |
 | **PDF extraction** | **PyPDF2** (fallback OCR uses `pdf2image` + `pytesseract` if installed). |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
 | **Authentication** | HMAC-signed expiring bearer tokens; PBKDF2 password hashes with legacy SHA-256 upgrade on login. |
@@ -194,7 +197,9 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 | `CORS_ORIGINS` | Comma-separated allowed browser origins. Defaults to local React development origins. | `https://notices.example.edu` |
 | `REACT_APP_API_URL` | Optional frontend API base URL; defaults to `http://127.0.0.1:8000`. | `https://api.example.edu` |
 | `NOTICE_UPLOAD_DIR` | Optional directory for private notice PDF storage. Defaults to `backend/uploads/notices`; use persistent storage in deployments. | `D:\notice-data\pdfs` |
-| `OPENAI_API_KEY` | Used only by older/prototype services; the active notice assistant does not send data to OpenAI. | Optional for the prototype services |
+| `OPENAI_API_KEY` | Enables OpenAI embeddings, Chroma retrieval, and answer generation. Approved notice text and retrieved excerpts are sent to OpenAI; without this key, the assistant uses local retrieval and excerpt-only responses. | Set privately in the backend environment |
+| `OPENAI_CHAT_MODEL` | OpenAI chat model used for answer generation. | `gpt-4o-mini` |
+| `CHROMA_DB_PATH` | Optional path for the existing persistent `notice_chunks` Chroma collection. | `chromadb` |
 
 The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.
 

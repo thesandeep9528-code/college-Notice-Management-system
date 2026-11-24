@@ -119,11 +119,11 @@ def _excerpt(text: str, terms: list[str]) -> str:
     return excerpt[:600]
 
 
-def answer_question(
+def retrieve_sources(
     question: str,
     top_k: int = 5,
     history: Optional[list[dict]] = None,
-) -> dict:
+) -> list[dict]:
     """Return matching excerpts from approved notices without external model calls."""
     previous_questions = [
         message["content"]
@@ -132,10 +132,7 @@ def answer_question(
     ]
     terms = _query_terms(" ".join([*previous_questions, question]))
     if not terms:
-        return {
-            "answer": "I couldn't find that information in the approved notices.",
-            "sources": [],
-        }
+        return []
 
     candidates = []
     for notice in get_notices_by_status(status="approved"):
@@ -181,6 +178,16 @@ def answer_question(
         {key: value for key, value in item.items() if key not in {"score", "created_at"}}
         for item in candidates[:top_k]
     ]
+    return sources
+
+
+def answer_question(
+    question: str,
+    top_k: int = 5,
+    history: Optional[list[dict]] = None,
+) -> dict:
+    """Return matching excerpts from approved notices without external model calls."""
+    sources = retrieve_sources(question, top_k=top_k, history=history)
     if not sources:
         return {
             "answer": "I couldn't find that information in the approved notices.",

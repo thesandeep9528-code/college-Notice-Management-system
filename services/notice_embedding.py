@@ -1,86 +1,122 @@
+import logging
 import os
 from typing import List, Dict
 
-# Provide a dummy OpenAI fallback for test environments where the package is unavailable.
-try:
-    import openai
-except ImportError:  # pragma: no cover
-    class _DummyOpenAI:
-        @staticmethod
-        def embeddings():
-            class _Create:
-                @staticmethod
-                def create(input, model):
-                    # Return a zero vector embedding (length 1536) compatible with text-embedding-3-large.
-                    return type('obj', (object,), {'data': [type('d', (object,), {'embedding': [0.0] * 1536})]})
-            return _Create()
-    openai = _DummyOpenAI()
+logger = logging.getLogger(__name__)
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
-# Retrieve API key; use a dummy if not set (required for dummy OpenAI).
-openai_api_key = os.getenv("OPENAI_API_KEY", "dummy-key")
-if hasattr(openai, "api_key"):
-    openai.api_key = openai_api_key
 
-# Attempt to import chromadb; fall back to an in‑memory stub if unavailable.
-try:
-    import chromadb
-    from chromadb.utils import embedding_functions
-    # Initialize persistent ChromaDB client and collection.
-    CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chromadb")
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    collection = client.get_or_create_collection(
-        name="notice_chunks",
-        metadata={"hnsw:space": "cosine"},
-        embedding_function=embedding_functions.OpenAIEmbeddingFunction(
-            api_key=openai_api_key, model_name="text-embedding-3-large"
-        ),
-    )
-except Exception:  # pragma: no cover
-    # Minimal in‑memory stub mimicking the subset of the Chroma API used in the code and tests.
-    class _InMemoryCollection:
-        def __init__(self):
-            self._records = []  # each record is a dict with id, document, metadata, embedding
+class _InMemoryCollection:
+    def __init__(self):
+        self._records = []
 
-        def add(self, ids, documents, metadatas, embeddings):
-            for _id, doc, meta, emb in zip(ids, documents, metadatas, embeddings):
-                self._records.append({"id": _id, "document": doc, "metadata": meta, "embedding": emb})
-
-        def get(self, where=None, include=None, limit=None):
-            # Simple filter by metadata fields.
-            filtered = [
-                r
-                for r in self._records
-                if where is None or all(r["metadata"].get(k) == v for k, v in where.items())
-            ]
-            result = {"ids": [r["id"] for r in filtered]}
-            if include and "metadatas" in include:
-                result["metadatas"] = [r["metadata"] for r in filtered]
-            return result
-
-        def query(self, query_texts, n_results, include):
-            q = query_texts[0].lower()
-            matches = []
-            for r in self._records:
-                if q in r["document"].lower():
-                    matches.append(r)
-                if len(matches) >= n_results:
-                    break
-            return {
-                "ids": [[m["id"] for m in matches]],
-                "documents": [[m["document"] for m in matches]],
-                "metadatas": [[m["metadata"] for m in matches]],
-                "distances": [[0.0 for _ in matches]],
+    def add(self, ids, documents, metadatas, embeddings=None):
+        for index, (record_id, document, metadata) in enumerate(
+            zip(ids, documents, metadatas)
+        ):
+            record = {
+                "id": record_id,
+                "document": document,
+                "metadata": metadata,
             }
+            if embeddings is not None:
+                record["embedding"] = embeddings[index]
+            self._records.append(record)
 
-    collection = _InMemoryCollection()
-    client = None  # type: ignore
+    def get(self, where=None, include=None, limit=None):
+        filtered = [
+            record
+            for record in self._records
+            if self._matches_where(record["metadata"], where)
+        ]
+        if limit is not None:
+            filtered = filtered[:limit]
+        result = {"ids": [record["id"] for record in filtered]}
+        if include and "metadatas" in include:
+            result["metadatas"] = [record["metadata"] for record in filtered]
+        return result
+
+    def delete(self, ids=None, where=None):
+        removed = set(ids or [])
+        self._records = [
+            record
+            for record in self._records
+            if record["id"] not in removed
+            and not self._matches_where(record["metadata"], where)
+        ]
+
+    def query(self, query_texts, n_results, include, where=None):
+        query = query_texts[0].lower()
+        matches = [
+            record
+            for record in self._records
+            if self._matches_where(record["metadata"], where)
+            and query in record["document"].lower()
+        ][:n_results]
+        result = {
+            "ids": [[record["id"] for record in matches]],
+            "documents": [[record["document"] for record in matches]],
+            "metadatas": [[record["metadata"] for record in matches]],
+        }
+        if "distances" in include:
+            result["distances"] = [[0.0 for _ in matches]]
+        return result
+
+    @staticmethod
+    def _matches_where(metadata, where):
+        if not where:
+            return True
+        if "$and" in where and not all(
+            _InMemoryCollection._matches_where(metadata, condition)
+            for condition in where["$and"]
+        ):
+            return False
+        for key, expected in where.items():
+            if key == "$and":
+                continue
+            value = metadata.get(key)
+            if isinstance(expected, dict) and "$in" in expected:
+                if value not in expected["$in"]:
+                    return False
+            elif value != expected:
+                return False
+        return True
+
+
+client = None
+collection = _InMemoryCollection()
+
+if openai_api_key:
+    try:
+        import chromadb
+        from chromadb.errors import ChromaError
+        from chromadb.utils import embedding_functions
+
+        chroma_db_path = os.getenv(
+            "CHROMA_DB_PATH",
+            os.path.join(os.path.dirname(__file__), "..", "chromadb"),
+        )
+        client = chromadb.PersistentClient(path=chroma_db_path)
+        collection = client.get_or_create_collection(
+            name="notice_chunks",
+            metadata={"hnsw:space": "cosine"},
+            embedding_function=embedding_functions.OpenAIEmbeddingFunction(
+                api_key_env_var="OPENAI_API_KEY",
+                model_name="text-embedding-3-large",
+            ),
+        )
+    except ImportError as error:  # pragma: no cover
+        logger.warning("ChromaDB is unavailable; using local notice retrieval: %s", error)
+    except ChromaError as error:  # pragma: no cover
+        logger.error("ChromaDB could not open its persistent collection: %s", error)
+        client = None
 
 # Chunking parameters.
 CHUNK_SIZE = 500  # characters
 CHUNK_OVERLAP = 50  # characters
 
 
-def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
     """Split *text* into overlapping chunks.
 
     Returns a list of string chunks.
@@ -96,68 +132,39 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
     return chunks
 
 
-def _embed_text(text: str) -> List[float]:
-    """Obtain an embedding vector for *text* using OpenAI embeddings."""
-    response = openai.embeddings.create(input=text, model="text-embedding-3-large")
-    return response.data[0].embedding
-
-
-def _notice_already_processed(notice_id: int) -> bool:
-    """Check if any chunk with the given ``notice_id`` exists in the collection."""
-    results = collection.get(where={"notice_id": notice_id}, include=["metadatas"], limit=1)
-    return bool(results.get("ids"))
-
-
 def process_approved_notices() -> None:
-    """Process all notices with status='approved' and store their text chunks.
+    """Synchronize approved SQLite notices into the persistent Chroma collection."""
+    if client is None:
+        logger.info("Notice indexing skipped because OpenAI or Chroma is unavailable")
+        return
 
-    This function can be called periodically (e.g., after a new notice is approved).
-    It skips notices already present in the vector store.
-    """
-    approved = get_notices_by_status("approved")
-    for notice in approved:
-        notice_id = notice["id"]
-        if _notice_already_processed(notice_id):
-            continue
-        pdf_path = notice.get("file_path")
-        if not pdf_path or not os.path.isfile(pdf_path):
-            continue
-        try:
-            pages = extract_text_from_pdf(pdf_path)
-        except PDFProcessingError:
-            continue
-        for page in pages:
-            page_num = page["page_number"]
-            text = page["extracted_text"].strip()
-            if not text:
-                continue
-            chunks = _chunk_text(text)
-            for idx, chunk in enumerate(chunks):
-                doc_id = f"{notice_id}_{page_num}_{idx}"
-                metadata = {
-                    "notice_id": notice_id,
-                    "page_number": page_num,
-                    "chunk_index": idx,
-                    "filename": os.path.basename(pdf_path),
-                }
-                embedding = _embed_text(chunk)
-                collection.add(
-                    ids=[doc_id],
-                    documents=[chunk],
-                    metadatas=[metadata],
-                    embeddings=[embedding],
-                )
+    from backend.database.queries import get_notices_by_status
+    from backend.services.rag_index import sync_approved_notices
+
+    sync_approved_notices(
+        get_notices_by_status(status="approved"),
+        collection=collection,
+    )
 
 
-def search_similar(query: str, top_k: int = 5) -> List[Dict]:
+def search_similar(
+    query: str,
+    top_k: int = 5,
+    where: dict | None = None,
+) -> List[Dict]:
     """Search the Chroma collection for *query* text and return matching chunks.
 
     Returns a list of dictionaries containing ``id``, ``document``, ``metadata`` and ``distance``.
     """
+    query_options: dict[str, object] = {
+        "query_texts": [query],
+        "n_results": top_k,
+        "include": ["documents", "metadatas", "distances", "ids"],
+    }
+    if where:
+        query_options["where"] = where
     results = collection.query(
-        query_texts=[query],
-        n_results=top_k,
-        include=["documents", "metadatas", "distances", "ids"],
+        **query_options,
     )
     output: List[Dict] = []
     for doc_id, doc, meta, dist in zip(

@@ -42,6 +42,7 @@ def client(tmp_path, monkeypatch):
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(main, "NOTICE_UPLOAD_DIR", upload_dir)
     monkeypatch.setenv("NOTICE_UPLOAD_DIR", str(upload_dir))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     connection.init_db()
     yield ASGISyncClient()
 
