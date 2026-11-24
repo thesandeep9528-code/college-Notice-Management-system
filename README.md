@@ -238,8 +238,19 @@ The React app will be served at `http://localhost:3000` and communicate with the
 
 ---
 
-## Author
-**Sandeep Kumar** – AI College Notice Intern  
-LinkedIn: [https://www.linkedin.com/in/sandeep-kumar-488581423](https://www.linkedin.com/in/sandeep-kumar-488581423)
+
+
+👨‍💻**About Me**
+
+Sandeep Kumar
+B.Tech Student | Computer Science / IT
+
+- 💻 Interested in Generative AI and Backend Development.
+- 🤖 Exploring LLMs, RAG Systems, and AI-powered applications.
+- 🚀 Building practical projects to solve real-world problems.
+
+Connect with me:
+
+- LinkedIn: https://www.linkedin.com/in/sandeep-kumar-488581423
 
 Feel free to open issues or submit pull requests for enhancements!
