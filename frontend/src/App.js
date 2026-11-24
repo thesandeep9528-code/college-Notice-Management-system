@@ -115,6 +115,8 @@ function App() {
     localStorage.removeItem('notice-token');
     setToken(null);
     setUser(null);
+    setEmail('');
+    setPassword('');
     setPage('home');
   }, []);
 
