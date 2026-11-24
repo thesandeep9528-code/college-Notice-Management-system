@@ -1,6 +1,6 @@
 # AI‑Powered College Notice Intelligence System ✨
 
-A lightweight Streamlit web‑app that lets a college community **upload, manage, search and query PDF notices**.  Students can **search by keywords, filter by category/department/semester, and ask natural‑language questions** backed by a Retrieval‑Augmented Generation (RAG) pipeline powered by Google Gemini.
+A lightweight **React** web‑app that lets a college community **upload, manage, search and query PDF notices**.  Students can **search by keywords, filter by category/department/semester, and ask natural‑language questions** backed by a Retrieval‑Augmented Generation (RAG) pipeline powered by **ChatGPT**.
 
 ---
 
@@ -16,7 +16,7 @@ A lightweight Streamlit web‑app that lets a college community **upload, manage
 | 7️⃣ | [Folder Structure](#folder‑structure) |
 | 8️⃣ | [Installation & Setup](#installation‑setup) |
 | 9️⃣ | [Environment Variables](#environment-variables) |
-| 🔟 | [Running the App](#running-the-app) |
+| 🔟 | [Running the App](#running‑app) |
 | 📸 | [Screenshots & Diagrams](#screenshots‑diagrams) |
 | 🚀 | [Future Improvements](#future‑improvements) |
 | 👤 | [Author](#author) |
@@ -32,7 +32,7 @@ The system is built for a **single college** and provides three user roles:
 | **Faculty** | Create new notices (PDF upload placeholder for now) and view their own submissions. |
 | **Admin** | Manage users, activate/deactivate accounts, approve/reject notices, and view activity logs. |
 
-All role‑based restrictions are enforced **server‑side** (see `app/app.py`).  
+All role‑based restrictions are enforced **server‑side** (see `backend/main.py`).
 
 ---
 
@@ -43,7 +43,7 @@ All role‑based restrictions are enforced **server‑side** (see `app/app.py`).
 | ✅ | Admin can **approve**, **reject** or **delete** notices. |
 | 📊 | Admin dashboard shows total numbers of students & faculty and activity logs. |
 | 🔍 | Students can **search** by title/description, filter by category, department & semester. |
-| 🤖 | RAG chatbot (`services/rag.py`) answers questions using **Google Gemini** and returns **source citations**. |
+| 🤖 | RAG chatbot (`services/rag.py`) answers questions using **ChatGPT** and returns **source citations**. |
 | 🗂️ | PDF extraction (`services/pdf_service.py`) with optional OCR fallback. |
 | 🧩 | Automatic notice intelligence (`services/notice_intelligence.py`) – categorisation, summary, deadline extraction, duplicate detection (file‑hash). |
 | 📦 | Vector store powered by **Chromadb** (`services/notice_embedding.py`). |
@@ -56,7 +56,7 @@ All role‑based restrictions are enforced **server‑side** (see `app/app.py`).
 ```text
 Student  ──► Search/Filter ► View Approved Notices
                │
-               └─► Ask question ► RAG pipeline ► Gemini answer + citations
+               └─► Ask question ► RAG pipeline ► ChatGPT answer + citations
 ```
 ```text
 Faculty  ──► Create Notice ► Save (status = pending)
@@ -70,7 +70,6 @@ Admin    ──► Review Pending Notices ► Approve / Reject
                │
                └─► Rejected → excluded from student search
 ```
-
 > **Diagram:** *Notice Upload & Approval Workflow*  
 > ![Notice Upload & Approval Workflow](docs/images/notice_upload_approval.png)
 
@@ -79,23 +78,22 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ## System Architecture
 ```
 ┌─────────────────────┐          ┌───────────────────────┐
-│   Streamlit UI      │  HTTP    │  Fast Python Backend   │
-│ (app/app.py)        ◀─────────▶│  (services, database) │
+│   React UI          │  HTTP    │  FastAPI Backend       │
+│ (frontend/)         ◀─────────▶│  (services, database) │
 └─────────────────────┘          └───────────────────────┘
           ▲                                 │
           │                                 ▼
    ┌───────────────┐                ┌───────────────┐
-   │   PostgreSQL  │  ←─SQL queries ┤   Chromadb    │
-   │   (psycopg2)  │                │ (vector store)│
+   │   SQLite DB   │  ←─SQL queries ┤   Chromadb    │
+   │   (notice_intel)│            │ (vector store)│
    └───────────────┘                └───────────────┘
           ▲                                 │
           │                                 ▼
    ┌─────────────────────┐          ┌─────────────────────┐
-   │   SQLite (Intel)    │          │  Google Gemini API  │
-   │   (notice_intel)    │          │  (gemini‑1.5‑flash)│
+   │   OpenAI API        │          │   ChatGPT (gpt‑4‑turbo)│
+   │   (ChatGPT)         │          │   (Answer generation)│
    └─────────────────────┘          └─────────────────────┘
 ```
-
 > **Diagram:** *Overall System Architecture*  
 > ![Overall System Architecture](docs/images/system_architecture.png)
 
@@ -104,8 +102,8 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ## RAG Pipeline
 1. **Retrieve relevant chunks** – `services/notice_embedding.search_similar()` queries Chromadb.  
 2. **Build prompt** – context fragments + user question.  
-3. **Generate answer** – `google.generativeai` Gemini model.  
-4. **Add citations** – unique `(filename, page_number)` pairs are rendered under **Sources**.  
+3. **Generate answer** – `openai` ChatGPT model.  
+4. **Add citations** – unique `(filename, page_number)` pairs are rendered under **Sources**.
 
 > **Diagram:** *PDF Processing & RAG Pipeline*  
 > ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png)
@@ -115,11 +113,11 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ## Technology Stack
 | Layer | Technology | Notes |
 |-------|------------|-------|
-| **UI** | **Streamlit** (Python) | Simple web UI, runs with `streamlit run app/app.py`. |
-| **Backend** | Python 3.10+ | Core logic lives in `services/` and `database/`. |
-| **Database** | **PostgreSQL** (via `psycopg2`) | Stores users & notices. |
+| **UI** | **React** (JavaScript) | Front‑end built with Create‑React‑App (`react-scripts`). |
+| **Backend** | **FastAPI** (Python 3.12) | Core API lives in `backend/main.py`. |
+| **Database** | **SQLite** (via `sqlite3`) | Stores users, notices, and auto‑generated metadata. |
 | **Vector Store** | **Chromadb** (local SQLite) | Stores text embeddings for RAG. |
-| **LLM** | **Google Gemini 1.5 Flash** (`google.generativeai`) | Requires `GEMINI_API_KEY`. |
+| **LLM** | **OpenAI ChatGPT** (`openai` package) | Uses `gpt‑4‑turbo` (or configured model). |
 | **PDF extraction** | **PyPDF2** (fallback OCR uses `pdf2image` + `pytesseract` if installed). |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
 | **Authentication** | Password hashing (`bcrypt` via `database/auth.py`). |
@@ -136,31 +134,18 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ai-college-notice/
 │
 ├─ .venv/                     # Python virtual environment (auto‑created)
-├─ app/
-│   └─ app.py                 # Streamlit entry point
-├─ database/
-│   ├─ config.py              # DB connection settings (env‑vars)
-│   ├─ connection.py          # psycopg2 connection helper
-│   ├─ queries.py             # CRUD helpers
-│   ├─ auth.py                # Password hashing & verification
-│   └─ seed_admin.py          # Creates a default admin user
-├─ services/
-│   ├─ pdf_service.py         # PDF → text + optional OCR
-│   ├─ rag.py                 # RAG answer generation
-│   ├─ notice_embedding.py    # Chromadb wrapper (fallback stub already in repo)
-│   ├─ notice_intelligence.py# Auto‑metadata extraction & SQLite storage
-│   └─ sqlite_helper.py       # Helper for the intel SQLite DB
+├─ frontend/                  # React front‑end
+│   ├─ public/
+│   └─ src/
+├─ backend/                   # FastAPI entry point (`main.py`)
+├─ database/                  # SQLite helpers and auth
+├─ services/                  # PDF, RAG, embedding, intelligence
 ├─ evaluation/
 │   └─ dataset.json           # Manual evaluation dataset (Phase 11)
-├─ tests/
-│   ├─ conftest.py
-│   ├─ test_citation_metadata.py
-│   ├─ test_pdf_service.py
-│   └─ test_queries.py
+├─ tests/                     # pytest suite
 ├─ docs/
 │   └─ images/                # Diagram PNGs referenced in README
-├─ logs/
-│   └─ admin.log              # Admin activity log (runtime)
+├─ logs/                      # Admin activity log
 ├─ .gitignore
 ├─ requirements.txt
 └─ README.md                  # ← **this file**
@@ -204,15 +189,10 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port (default 5432) | `5432` |
-| `DB_NAME` | Database name | `college_notice` |
-| `DB_USER` | DB user | `postgres` |
-| `DB_PASSWORD` | DB password | `postgres` |
-| `GEMINI_API_KEY` | Google Gemini API key (required for RAG) | `AIzaSy...` |
-| `PYTHONPATH` *(optional)* | Include project root for imports | `.` |
+| `OPENAI_API_KEY` | OpenAI API key (required for RAG) | `sk-...` |
+| `DB_PATH` | Path to the SQLite DB file | `database/sqlite_notices.db` |
 
-The `database/config.py` file reads these variables with sensible defaults, so the app will still start with a local PostgreSQL instance if you don't provide them.
+The `database/config.py` file reads these variables with sensible defaults, so the app will still start with a local SQLite instance if you don't provide them.
 
 ---
 
@@ -221,11 +201,16 @@ The `database/config.py` file reads these variables with sensible defaults, so t
 # Activate the venv first if not already active
 .venv\Scripts\activate
 
-# Run the Streamlit UI
-.venv\Scripts\streamlit run app/app.py
+# Start the FastAPI backend
+uvicorn backend.main:app --reload
 ```
-Open the displayed URL (usually `http://localhost:8501`) in a browser.  
-Log in with the seeded admin credentials, create student/faculty accounts, upload notices, approve them, and start asking questions!
+Open `http://127.0.0.1:8000/docs` to explore the OpenAPI UI, or run the React front‑end:
+```bash
+cd frontend
+npm install   # requires internet
+npm start
+```
+The React app will be served at `http://localhost:3000` and communicate with the FastAPI backend.
 
 ---
 
@@ -245,7 +230,7 @@ Log in with the seeded admin credentials, create student/faculty accounts, uploa
 | # | Planned Feature | Status |
 |---|----------------|--------|
 | 🚧 | Real PDF file upload & storage (instead of placeholder path) | **Phase 9** – partially implemented (UI ready). |
-| 🚧 | Automatic notice categorisation, summarisation & deadline extraction (already in `notice_intelligence.py`) – integrate into upload flow. | **Phase 10** – backend ready, UI pending. |
+| 🚧 | Automatic notice categorisation, summarisation & deadline extraction – integrate into upload flow. | **Phase 10** – backend ready, UI pending. |
 | 🚧 | Duplicate‑notice detection using file hash. | Implemented in `notice_intelligence.py`. |
 | 🚧 | Semantic search UI (vector similarity ranking) | RAG already uses Chromadb; a dedicated search page can be added. |
 | 🚧 | Deployment scripts (Docker, Kubernetes) | Not required for the current portfolio demo. |
@@ -255,7 +240,6 @@ Log in with the seeded admin credentials, create student/faculty accounts, uploa
 
 ## Author
 **Sandeep Kumar** – AI College Notice Intern  
-LinkedIn: [https://www.linkedin.com/in/sandeep-kumar-488581423](https://www.linkedin.com/in/sandeep-kumar-488581423)  
-GitHub: https://github.com/yourusername  
+LinkedIn: [https://www.linkedin.com/in/sandeep-kumar-488581423](https://www.linkedin.com/in/sandeep-kumar-488581423)
 
 Feel free to open issues or submit pull requests for enhancements!
