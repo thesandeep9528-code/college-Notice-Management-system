@@ -20,6 +20,12 @@ const jsonResponse = (payload) => ({
   json: async () => payload,
 });
 
+const unauthorizedResponse = () => ({
+  ok: false,
+  status: 401,
+  json: async () => ({ detail: 'Invalid or expired token' }),
+});
+
 it('sends chatbot questions scoped to the notice selected from the board', async () => {
   const previousFetch = global.fetch;
   const previousActEnvironment = global.IS_REACT_ACT_ENVIRONMENT;
@@ -164,6 +170,39 @@ it('offers only student and faculty workspaces and keeps student registration ro
       semester: '2',
     });
     expect(container.textContent).toContain('Student account created.');
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    global.fetch = previousFetch;
+    global.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    if (previousToken === null) localStorage.removeItem('notice-token');
+    else localStorage.setItem('notice-token', previousToken);
+  }
+});
+
+it('clears an expired session and prompts the user to sign in again', async () => {
+  const previousFetch = global.fetch;
+  const previousActEnvironment = global.IS_REACT_ACT_ENVIRONMENT;
+  const previousToken = localStorage.getItem('notice-token');
+  localStorage.setItem('notice-token', 'expired-token');
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  const fetchMock = jest.fn(async () => unauthorizedResponse());
+  global.fetch = fetchMock;
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+
+  try {
+    await act(async () => {
+      root.render(<App />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.login-form')).toBeTruthy();
+    expect(container.textContent).toContain('Your session expired. Please sign in again.');
+    expect(localStorage.getItem('notice-token')).toBeNull();
   } finally {
     await act(async () => root.unmount());
     container.remove();

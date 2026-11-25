@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import './App.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const AUTH_EXPIRED_EVENT = 'campusnotice:auth-expired';
 const EMPTY_NOTICE = { title: '', description: '', category: '', department: '', semester: '' };
 const CATEGORY_OPTIONS = ['Academic', 'Examination', 'Events', 'General', 'Fees', 'Placement'];
 const DEPARTMENT_OPTIONS = ['Computer Science', 'Information Technology', 'Electronics', 'Mechanical', 'Civil'];
@@ -28,6 +29,16 @@ const SHOW_DEMO_CREDENTIALS = process.env.NODE_ENV === 'development'
   && process.env.REACT_APP_SHOW_DEMO_CREDENTIALS === 'true'
   && DEMO_ACCOUNTS.every(({ email, password }) => email && password);
 
+function notifyExpiredSession(status, token) {
+  if (
+    status === 401
+    && token
+    && localStorage.getItem('notice-token') === token
+  ) {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
+}
+
 async function apiRequest(path, token, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const response = await fetch(`${API_BASE}${path}`, {
@@ -40,7 +51,10 @@ async function apiRequest(path, token, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.detail || `Request failed (${response.status})`);
+    const error = new Error(payload.detail || `Request failed (${response.status})`);
+    error.status = response.status;
+    notifyExpiredSession(response.status, token);
+    throw error;
   }
   return payload;
 }
@@ -61,7 +75,10 @@ function uploadFormData(path, token, body, onProgress, method = 'POST') {
         payload = {};
       }
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(payload.detail || `Request failed (${request.status})`));
+        const error = new Error(payload.detail || `Request failed (${request.status})`);
+        error.status = request.status;
+        notifyExpiredSession(request.status, token);
+        reject(error);
         return;
       }
       resolve(payload);
@@ -77,7 +94,10 @@ async function fetchNoticePdf(noticeId, token, download = false) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.detail || `Request failed (${response.status})`);
+    const error = new Error(payload.detail || `Request failed (${response.status})`);
+    error.status = response.status;
+    notifyExpiredSession(response.status, token);
+    throw error;
   }
   return response.blob();
 }
@@ -138,7 +158,7 @@ function App() {
     window.setTimeout(() => setToast(null), 3500);
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback((sessionExpired = false) => {
     localStorage.removeItem('notice-token');
     setToken(null);
     setUser(null);
@@ -146,13 +166,23 @@ function App() {
     setPassword('');
     setSelectedRole('');
     setPage('home');
+    setLoginError('');
+    setAuthMessage(sessionExpired ? 'Your session expired. Please sign in again.' : '');
   }, []);
+
+  useEffect(() => {
+    const handleExpiredSession = () => logout(true);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+  }, [logout]);
 
   useEffect(() => {
     if (!token) return;
     apiRequest('/me', token)
       .then(setUser)
-      .catch(() => logout());
+      .catch((error) => {
+        if (error.status !== 401) logout();
+      });
   }, [token, logout]);
 
   const handleLogin = async (event) => {
@@ -328,7 +358,7 @@ function App() {
         <div className="sidebar-user">
           <div className="avatar">{(user.email || 'U').charAt(0).toUpperCase()}</div>
           <div className="sidebar-user-info"><strong>{user.email.split('@')[0]}</strong><span>{roleTitle}</span></div>
-          <button className="icon-button logout-button" onClick={logout} title="Sign out" aria-label="Sign out"><Icon name="logout" /></button>
+          <button className="icon-button logout-button" onClick={() => logout()} title="Sign out" aria-label="Sign out"><Icon name="logout" /></button>
         </div>
       </aside>
 
@@ -540,6 +570,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
         sources: response.sources || [],
       }]);
     } catch (requestError) {
+      if (requestError.status === 401) return;
       setMessages((current) => [...current, {
         role: 'assistant',
         content: requestError.message,

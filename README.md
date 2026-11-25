@@ -184,7 +184,7 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `AUTH_SECRET_KEY` | Stable secret used to sign API tokens; required in production. Without it, development uses a process-only random secret and restarts sign users out. | Generate a private random value |
+| `AUTH_SECRET_KEY` | Stable secret used to sign API tokens; required in production and recommended locally so API restarts preserve sessions. Without it, development uses a process-only random secret and restarts sign users out. | Generate a private random value |
 | `APP_ENV` | Set to `production` to require `AUTH_SECRET_KEY`. | `production` |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins. Defaults to local React development origins. | `https://notices.example.edu` |
 | `REACT_APP_API_URL` | Optional frontend API base URL; defaults to `http://127.0.0.1:8000`. | `https://api.example.edu` |
