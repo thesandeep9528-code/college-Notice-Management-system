@@ -289,6 +289,10 @@ def retrieve_documents(state: RagGraphState) -> dict:
     sources = _sources_from_hits(hits, notices, retrieval_query, top_k)
     if not sources:
         sources = _local_sources(state, top_k)
+        logger.info("DEBUG query=%s notice_id=%s retrieved=%d", state.get("question"), state.get("notice_id"), len(sources))
+        for src in sources:
+            logger.info("DEBUG chunk=%s", (src.get("excerpt") or "")[:300])
+            logger.info("DEBUG contains_name=%s", "adesh" in (src.get("excerpt") or "").lower())
         if sources:
             logger.info(
                 "Chroma returned no usable sources; using local notice retrieval"
