@@ -3,7 +3,10 @@ import os
 from io import BytesIO
 from typing import List, Dict
 
-import PyPDF2
+try:
+    import pdfplumber
+except ImportError:  # pragma: no cover
+    pdfplumber = None
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +107,7 @@ def _ocr_page(pdf_path: str, page_number: int) -> str:
 
 
 def extract_text_from_pdf(pdf_path: str) -> List[Dict]:
-    """Extract text from a PDF, page by page using PyPDF2.
+    """Extract text from a PDF, page by page, preferring pdfplumber tables.
 
     Parameters
     ----------
@@ -114,16 +117,34 @@ def extract_text_from_pdf(pdf_path: str) -> List[Dict]:
     Returns
     -------
     List[Dict]
-        A list where each dict contains ``page_number`` (1‑based) and
+        A list where each dict contains ``page_number`` (1-based) and
         ``extracted_text`` (the raw string). If a page yields no text via
-        PyPDF2, an OCR fallback is attempted; the result (even if empty) is
-        still stored.
-
-    Raises
-    ------
-    PDFProcessingError
-        If the file cannot be opened as a PDF.
+        pdfplumber/PyPDF2, an OCR fallback is attempted; the result (even if
+        empty) is still stored.
     """
+    if pdfplumber is not None:
+        try:
+            results = []
+            with pdfplumber.open(pdf_path) as pdf:
+                for page_index, page in enumerate(pdf.pages):
+                    parts = []
+                    tables = page.extract_tables() or []
+                    for table in tables:
+                        for row in table:
+                            cells = [str(cell).strip() if cell is not None else "" for cell in row]
+                            if any(cells):
+                                parts.append(" | ".join(cells))
+                    text = "\n".join(parts).strip()
+                    if not text:
+                        text = page.extract_text() or ""
+                    if not text.strip():
+                        text = _ocr_page(pdf_path, page_index)
+                    results.append({"page_number": page_index + 1, "extracted_text": text})
+            if results:
+                return results
+        except Exception as error:  # pragma: no cover
+            logger.warning("pdfplumber failed for %s: %s", pdf_path, error)
+
     if not os.path.isfile(pdf_path):
         raise PDFProcessingError(f"File not found: {pdf_path}")
     try:
