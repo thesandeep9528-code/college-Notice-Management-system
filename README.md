@@ -103,7 +103,9 @@ Admin    ──► Review Pending Notices ► Approve / Reject
 ---
 
 ## AI Notice Assistant
-The student-only `/rag` endpoint requires a selected approved notice ID and runs through a LangGraph workflow while keeping SQLite authoritative for notice metadata and approval status. Students select a notice from the existing filtered notice board; retrieval, PDF indexing, and answer context are restricted to that one notice. When configured, its metadata and extractable PDF page text are synced into the existing Chroma collection, used for OpenAI embedding retrieval, and passed to OpenAI for a source-cited answer. Results are checked against cited source text, with at most one retrieval retry. If OpenAI or Chroma credentials/services are unavailable, the assistant uses local retrieval within the same selected notice and returns excerpts instead of an ungrounded generated answer. PDF text is extracted page-by-page with PyPDF2; scanned image-only PDFs are not OCR-processed by the active assistant.
+The student-only `/rag` endpoint requires a selected approved notice ID and runs through a LangGraph workflow while keeping SQLite authoritative for notice metadata and approval status. Students select a notice from the existing filtered notice board; retrieval, PDF indexing, and answer context are restricted to that one notice. When configured, its metadata and extracted PDF page text are synced into the existing Chroma collection, used for OpenAI embedding retrieval, and passed to OpenAI for a source-cited answer. Results are checked against cited source text, with at most one retrieval retry. If OpenAI or Chroma credentials/services are unavailable, the assistant uses local retrieval within the same selected notice and returns excerpts instead of an ungrounded generated answer. PDF text is extracted page-by-page with PyPDF2; image-only pages use local pypdfium2 rendering and pytesseract/Tesseract OCR before indexing or local retrieval. OCR runs on the backend host and does not send images to OpenAI.
+
+Install the Tesseract OCR executable on the backend host and ensure it is available on `PATH` (on Windows, `winget install UB-Mannheim.TesseractOCR`). For a non-default installation path, set `TESSERACT_CMD` to the executable path. The Python dependencies for local rendering and OCR are listed in `requirements.txt` and `backend/requirements.txt`.
 
 With `OPENAI_API_KEY` configured, only the selected approved notice text is sent to OpenAI for embeddings, and retrieved excerpts plus the student question are sent for answer generation. Use this only where that data sharing is permitted. The top-level `services/rag.py` remains a separate legacy Gemini implementation and is not called by FastAPI.
 
@@ -121,7 +123,7 @@ With `OPENAI_API_KEY` configured, only the selected approved notice text is sent
 | **Vector Store** | **ChromaDB** | Stores approved notice metadata and PDF text chunks for semantic retrieval. |
 | **LLM orchestration** | **LangGraph** | Typed state graph with bounded retries and source-grounded fallback. |
 | **Embeddings / answer generation** | **OpenAI API** | Optional; configured with `OPENAI_API_KEY`. |
-| **PDF extraction** | **PyPDF2** (fallback OCR uses `pdf2image` + `pytesseract` if installed). |
+| **PDF extraction** | **PyPDF2** text extraction, with local OCR on image-only pages using **pypdfium2**, **pytesseract**, and the Tesseract OCR executable. |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
 | **Authentication** | HMAC-signed expiring bearer tokens; PBKDF2 password hashes with legacy SHA-256 upgrade on login. |
 | **Logging** | Admin audit events stored in the application SQLite database. |

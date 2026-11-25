@@ -249,6 +249,31 @@ def test_selected_notice_limits_chroma_sync_and_retrieval(monkeypatch):
     assert {source["notice_id"] for source in result["sources"]} == {17}
 
 
+def test_chroma_search_uses_supported_include_fields(monkeypatch):
+    from services import notice_embedding
+
+    class FakeCollection:
+        def query(self, **kwargs):
+            assert kwargs["include"] == ["documents", "metadatas", "distances"]
+            return {
+                "ids": [["chunk-1"]],
+                "documents": [["Academic calendar for session 2026-27."]],
+                "metadatas": [[{"notice_id": 17, "page_number": 1}]],
+                "distances": [[0.1]],
+            }
+
+    monkeypatch.setattr(notice_embedding, "collection", FakeCollection())
+
+    assert notice_embedding.search_similar("academic calendar") == [
+        {
+            "id": "chunk-1",
+            "document": "Academic calendar for session 2026-27.",
+            "metadata": {"notice_id": 17, "page_number": 1},
+            "distance": 0.1,
+        }
+    ]
+
+
 def test_sync_indexes_approved_pdf_pages_once(monkeypatch, tmp_path):
     class FakeCollection:
         def __init__(self):

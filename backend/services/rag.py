@@ -6,10 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from PyPDF2 import PdfReader
-from PyPDF2.errors import PdfReadError
-
 from ..database.queries import get_notices_by_status
+from services.pdf_service import PDFProcessingError, extract_text_from_pdf
 
 
 logger = logging.getLogger(__name__)
@@ -70,21 +68,18 @@ def _pdf_path(file_path: Optional[str]) -> Optional[Path]:
 @lru_cache(maxsize=128)
 def _extract_pdf_pages(file_path: str, _modified_time: int) -> tuple[tuple[int, str], ...]:
     try:
-        reader = PdfReader(file_path)
-    except (OSError, PdfReadError, TypeError, ValueError) as error:
+        extracted_pages = extract_text_from_pdf(file_path)
+    except PDFProcessingError as error:
         logger.warning("Unable to read an approved notice PDF: %s", error)
         return ()
 
-    extracted_pages = []
-    for page_number, page in enumerate(reader.pages, start=1):
-        try:
-            text = page.extract_text() or ""
-        except (KeyError, PdfReadError, TypeError, ValueError) as error:
-            logger.warning("Unable to extract page %s from an approved notice PDF: %s", page_number, error)
-            continue
+    pages = []
+    for extracted_page in extracted_pages:
+        page_number = extracted_page["page_number"]
+        text = extracted_page["extracted_text"]
         if text.strip():
-            extracted_pages.append((page_number, text.strip()))
-    return tuple(extracted_pages)
+            pages.append((page_number, text.strip()))
+    return tuple(pages)
 
 
 def _notice_metadata_text(notice: dict) -> str:

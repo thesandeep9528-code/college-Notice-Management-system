@@ -159,7 +159,7 @@ def search_similar(
     query_options: dict[str, object] = {
         "query_texts": [query],
         "n_results": top_k,
-        "include": ["documents", "metadatas", "distances", "ids"],
+        "include": ["documents", "metadatas", "distances"],
     }
     if where:
         query_options["where"] = where
