@@ -506,6 +506,9 @@ def route_after_evaluation(state: RagGraphState) -> str:
 
 
 def fallback_answer(state: RagGraphState) -> dict:
+    sources = state.get("sources", [])
+    if sources:
+        return {"answer": sources[0].get("excerpt", NOT_FOUND_ANSWER)[:1200]}
     return {"answer": NOT_FOUND_ANSWER}
 
 
