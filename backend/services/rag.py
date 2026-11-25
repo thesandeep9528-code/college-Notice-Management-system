@@ -46,11 +46,13 @@ STOP_WORDS = {
 
 
 def _query_terms(text: str) -> list[str]:
-    return [
-        token
-        for token in TOKEN_PATTERN.findall(text.lower())
-        if token not in STOP_WORDS and len(token) > 1
-    ]
+    terms = []
+    for token in TOKEN_PATTERN.findall(text.lower()):
+        if token.endswith("s") and len(token) > 3:
+            token = token[:-1]
+        if token not in STOP_WORDS and len(token) > 1:
+            terms.append(token)
+    return terms
 
 
 def _pdf_path(file_path: Optional[str]) -> Optional[Path]:
@@ -102,14 +104,14 @@ def _score(text: str, terms: list[str]) -> int:
 def _excerpt(text: str, terms: list[str]) -> str:
     sentences = [
         sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+|\r?\n+", text)
+        for sentence in re.split(r"\r?\n+", text)
         if sentence.strip()
     ]
     ranked = sorted(
         enumerate(sentences),
         key=lambda item: (-_score(item[1], terms), item[0]),
     )
-    best = [sentence for _, sentence in ranked[:2] if _score(sentence, terms)]
+    best = [sentence for _, sentence in ranked if _score(sentence, terms)]
     excerpt = " ".join(best) if best else " ".join(text.split())
     return excerpt[:600]
 
