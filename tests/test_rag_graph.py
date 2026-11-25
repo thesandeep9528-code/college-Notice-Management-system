@@ -138,6 +138,7 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
 
     class FakeCompletions:
         def create(self, **kwargs):
+            assert kwargs["max_tokens"] == 160
             assert "[Source 1: Registration schedule, page 2]" in kwargs["messages"][1]["content"]
             return SimpleNamespace(
                 choices=[

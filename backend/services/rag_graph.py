@@ -22,6 +22,7 @@ else:
 
 MAX_RETRIEVAL_ATTEMPTS = 2
 MAX_TOP_K = 20
+MAX_ANSWER_TOKENS = 160
 NOT_FOUND_ANSWER = "I couldn't find that information in the approved notices."
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source\s+(\d+)\]")
 MONTH_NAMES = {
@@ -241,6 +242,7 @@ def generate_answer(state: RagGraphState) -> dict:
         response = OpenAI(api_key=api_key).chat.completions.create(
             model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
             temperature=0,
+            max_tokens=MAX_ANSWER_TOKENS,
             messages=[
                 {
                     "role": "system",
