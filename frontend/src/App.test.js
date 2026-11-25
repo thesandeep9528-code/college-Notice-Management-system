@@ -62,7 +62,7 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     if (url.endsWith('/rag')) {
       return jsonResponse({
         question: 'What date is the exam?',
-        answer: '- Final examination: December 12 [Source 1].',
+        answer: '1. Exam date: December 12 [Source 1].',
         sources: [{
           notice_id: notice.id,
           title: notice.title,
@@ -126,8 +126,9 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     expect(ragRequest).toBeTruthy();
     expect(JSON.parse(ragRequest[1].body).notice_id).toBe(notice.id);
     expect(container.querySelector('.chat-assistant p').textContent)
-      .toBe('- Final examination: December 12 [Source 1].');
-    expect(container.querySelector('.chat-source').textContent.trim()).toBe('Open notice');
+      .toBe('1. Exam date: December 12 [Source 1].');
+    expect(container.querySelector('.chat-source .source-link').textContent.trim()).toBe('Open notice');
+    expect(container.querySelector('.chat-source small').textContent).toBe('exam-schedule.pdf · Page 1');
     expect(container.textContent).not.toContain('The final examination is on December 12.');
 
     await act(async () => {

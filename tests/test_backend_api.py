@@ -507,7 +507,10 @@ def test_student_assistant_returns_pdf_page_citations(client, monkeypatch):
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content="- Registration opens on September 12 [Source 1]."
+                            content=(
+                                "1. Registration date: September 12 "
+                                "[Source 1]."
+                            )
                         )
                     )
                 ]
@@ -545,9 +548,10 @@ def test_student_assistant_returns_pdf_page_citations(client, monkeypatch):
         json={"question": "When does registration open?", "notice_id": notice_id},
     )
     assert response.status_code == 200
-    assert response.json()["answer"].startswith("- ")
+    assert response.json()["answer"].startswith("1. ")
     assert "September 12" in response.json()["answer"]
     assert response.json()["sources"][0]["notice_id"] == notice_id
+    assert response.json()["sources"][0]["file_name"] == "registration.pdf"
     assert response.json()["sources"][0]["page_number"] == 1
 
 

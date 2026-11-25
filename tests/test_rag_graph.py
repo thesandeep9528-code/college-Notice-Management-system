@@ -81,6 +81,54 @@ def test_answer_evaluation_requires_a_valid_grounded_source():
     )["grounded"] is False
 
 
+def test_answer_evaluation_normalizes_months_and_numbered_point_indices():
+    source = {"excerpt": "Date: Sept. 01, 2026."}
+    result = rag_graph.evaluate_answer(
+        {
+            "question": "Summarize this notice",
+            "retrieval_query": "Summarize this notice",
+            "summary_mode": True,
+            "sources": [source],
+            "answer": "2. Academic start date: September 1, 2026 [Source 1].",
+            "generation_mode": "openai",
+        }
+    )
+
+    assert result == {
+        "grounded": True,
+        "answer": "2. Academic start date: September 1, 2026 [Source 1].",
+    }
+
+
+def test_each_numbered_answer_point_must_match_its_cited_source():
+    sources = [
+        {"excerpt": "Registration closes on September 12."},
+        {"excerpt": "Exams begin on October 5."},
+    ]
+    state = {
+        "question": "Summarize this notice",
+        "retrieval_query": "Summarize this notice",
+        "summary_mode": True,
+        "sources": sources,
+        "generation_mode": "openai",
+        "answer": (
+            "1. Registration deadline: September 12 [Source 1].\n"
+            "2. Exams: October 5 [Source 2]."
+        ),
+    }
+
+    assert rag_graph.evaluate_answer(state)["grounded"] is True
+    assert rag_graph.evaluate_answer(
+        {
+            **state,
+            "answer": (
+                "1. Registration deadline: September 12 [Source 1].\n"
+                "2. Exams: November 5 [Source 2]."
+            ),
+        }
+    )["grounded"] is False
+
+
 def test_retry_routing_has_a_fixed_attempt_limit():
     assert rag_graph.route_after_evaluation(
         {"grounded": True, "retry_count": 1}
@@ -112,6 +160,7 @@ def test_graph_retries_once_then_returns_not_found(monkeypatch):
         "answer": rag_graph.NOT_FOUND_ANSWER,
         "sources": [],
     }
+    assert result["answer"] == "I couldn't find this information in the uploaded PDFs."
 
 
 def test_generation_failure_returns_concise_fallback(monkeypatch):
@@ -200,16 +249,22 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
         def create(self, **kwargs):
             assert kwargs["max_tokens"] == 160
             system_prompt = kwargs["messages"][0]["content"].lower()
-            assert "short bullet points" in system_prompt
-            assert "one useful fact per bullet" in system_prompt
+            assert "numbered points" in system_prompt
+            assert "short heading" in system_prompt
             assert "repeat or quote the notice verbatim" in system_prompt
             assert "i couldn't verify a complete answer" not in system_prompt
-            assert "[Source 1: Registration schedule, page 2]" in kwargs["messages"][1]["content"]
+            assert (
+                "[Source 1: registration.pdf (Registration schedule), page 2]"
+                in kwargs["messages"][1]["content"]
+            )
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content="- Registration opens on September 12 [Source 1, page 2]."
+                            content=(
+                                "1. Registration date: September 12 "
+                                "[Source 1, page 2]."
+                            )
                         )
                     )
                 ]
@@ -248,7 +303,7 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
 
     result = rag_graph.answer_question("When does registration open?")
 
-    assert result["answer"].startswith("- ")
+    assert result["answer"].startswith("1. ")
     assert "September 12" in result["answer"]
     assert result["sources"] == [
         {
@@ -313,6 +368,42 @@ def test_selected_notice_limits_chroma_sync_and_retrieval(monkeypatch):
     assert indexed == [notices[0]]
     assert search_filters[0]["$and"][0] == {"notice_id": {"$in": [17]}}
     assert {source["notice_id"] for source in result["sources"]} == {17}
+
+
+def test_empty_chroma_results_fall_back_to_selected_notice_retrieval(monkeypatch):
+    notice = {"id": 17, "title": "Registration schedule"}
+    local_source = {
+        "notice_id": 17,
+        "title": notice["title"],
+        "file_name": "registration.pdf",
+        "page_number": 2,
+        "has_file": True,
+        "excerpt": "Registration opens on September 12.",
+    }
+    local_calls = []
+    monkeypatch.setattr(rag_graph, "get_notices_by_status", lambda status: [notice])
+    monkeypatch.setattr(rag_graph, "get_chroma_collection", lambda: object())
+    monkeypatch.setattr(rag_graph, "sync_approved_notices", lambda notices, collection: True)
+    monkeypatch.setattr(rag_graph, "_search_similar", lambda query, top_k, where: [])
+    monkeypatch.setattr(
+        rag_graph,
+        "_local_sources",
+        lambda state, top_k: local_calls.append(state["notice_id"]) or [local_source],
+    )
+
+    result = rag_graph.retrieve_documents(
+        {
+            "question": "When does registration open?",
+            "retrieval_query": "When does registration open?",
+            "notice_id": 17,
+            "top_k": 5,
+            "retry_count": 0,
+        }
+    )
+
+    assert local_calls == [17]
+    assert result["sources"] == [local_source]
+    assert result["generation_mode"] == "excerpts"
 
 
 def test_summary_retrieval_uses_full_text_from_only_the_selected_pdf(
@@ -422,8 +513,8 @@ def test_graph_summarizes_selected_pdf_with_one_grounded_model_call(
                     SimpleNamespace(
                         message=SimpleNamespace(
                             content=(
-                                "- Classes begin on July 14, 2026 [Source 1].\n"
-                                "- Examinations start on December 3, 2026 [Source 1]."
+                                "1. Class dates: Classes begin July 14, 2026 [Source 1].\n"
+                                "2. Exam dates: Examinations start December 3, 2026 [Source 1]."
                             )
                         )
                     )

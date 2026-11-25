@@ -630,7 +630,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
             {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message chat-${message.role}`}>
               <span className="answer-label">{message.role === 'user' ? 'YOU' : <><Icon name="spark" size={15} /> NOTICE ASSISTANT</>}</span>
               <p role={message.error ? 'alert' : undefined}>{message.content}</p>
-              {message.role === 'assistant' && assistantNotice?.has_file && <div className="chat-sources"><button className="chat-source" aria-label={`Open ${assistantNotice.title} PDF`} onClick={() => openPdfPreview(assistantNotice, message.sources?.[0]?.page_number || 1)}><span className="source-link">Open notice <Icon name="arrow" size={13} /></span></button></div>}
+              {message.role === 'assistant' && assistantNotice?.has_file && <div className="chat-sources"><button className="chat-source" aria-label={`Open ${message.sources?.[0]?.file_name || assistantNotice.file_name || assistantNotice.title} PDF`} onClick={() => openPdfPreview(assistantNotice, message.sources?.[0]?.page_number || 1)}><span className="source-link">Open notice <Icon name="arrow" size={13} /></span><small>{message.sources?.[0]?.file_name || assistantNotice.file_name || 'PDF'}{message.sources?.[0]?.page_number ? ` · Page ${message.sources[0].page_number}` : ''}</small></button></div>}
             </article>)}
             {asking && <div className="chat-message chat-assistant" role="status"><span className="answer-label"><Icon name="spark" size={15} /> NOTICE ASSISTANT</span><p>Searching approved notices…</p></div>}
           </div>
