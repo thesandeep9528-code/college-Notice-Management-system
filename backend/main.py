@@ -16,7 +16,7 @@ from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from dotenv import load_dotenv
 
@@ -36,6 +36,11 @@ from .database.queries import (
     update_user,
 )
 from .services.rag_graph import answer_question
+from services.pdf_service import (
+    PDFPageNotFoundError,
+    PDFProcessingError,
+    render_pdf_page,
+)
 
 
 load_dotenv()
@@ -234,6 +239,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-PDF-Page-Count"],
 )
 
 
@@ -410,6 +416,42 @@ async def get_notice_file(
         filename=notice.get("file_name") or "notice.pdf",
         content_disposition_type="attachment" if download else "inline",
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/notices/{notice_id}/pages/{page_number}")
+async def get_notice_pdf_page(
+    notice_id: int,
+    page_number: int,
+    user=Depends(get_current_user),
+):
+    notice = get_notice_by_id(notice_id)
+    if not notice:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    _assert_notice_visible(notice, user)
+    file_path = _stored_pdf_path(notice.get("file_path"))
+    if not file_path or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Notice PDF not found")
+
+    try:
+        image, page_count = render_pdf_page(str(file_path), page_number)
+    except PDFPageNotFoundError as error:
+        raise HTTPException(status_code=404, detail="PDF page not found") from error
+    except PDFProcessingError as error:
+        logger.exception("Unable to render notice %s page %s", notice_id, page_number)
+        raise HTTPException(
+            status_code=422,
+            detail="Unable to preview this PDF",
+        ) from error
+
+    return Response(
+        content=image,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-PDF-Page-Count": str(page_count),
+        },
     )
 
 

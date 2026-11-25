@@ -245,7 +245,7 @@ def test_faculty_notices_publish_immediately_and_remain_owner_scoped(client):
     ).status_code == 404
 
 
-def test_faculty_pdf_upload_is_immediately_visible_to_students(client):
+def test_faculty_pdf_upload_is_immediately_visible_to_students(client, monkeypatch):
     faculty_headers = _login(client, "faculty@example.edu")
     other_faculty = _create_user("faculty", "other@example.edu")
     other_headers = _login(client, other_faculty["email"])
@@ -292,6 +292,23 @@ def test_faculty_pdf_upload_is_immediately_visible_to_students(client):
         f"/notices/{notice['id']}/file",
         headers=student_headers,
     ).content == pdf_content
+    monkeypatch.setattr(
+        main,
+        "render_pdf_page",
+        lambda file_path, page_number: (b"\x89PNG\r\n\x1a\npreview", 1),
+    )
+    preview = client.get(
+        f"/notices/{notice['id']}/pages/1",
+        headers=student_headers,
+    )
+    assert preview.status_code == 200
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.headers["x-pdf-page-count"] == "1"
+    assert client.get(
+        f"/notices/{notice['id']}/pages/1",
+        headers=other_headers,
+    ).status_code == 404
 
 
 def test_upload_rejects_non_pdf_and_oversized_files(client, monkeypatch):

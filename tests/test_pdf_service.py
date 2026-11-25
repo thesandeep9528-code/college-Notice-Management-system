@@ -6,7 +6,12 @@ import pytest
 import PyPDF2
 from backend.services import rag
 from services import pdf_service
-from services.pdf_service import extract_text_from_pdf, PDFProcessingError
+from services.pdf_service import (
+    PDFPageNotFoundError,
+    PDFProcessingError,
+    extract_text_from_pdf,
+    render_pdf_page,
+)
 
 
 def create_sample_pdf(texts):
@@ -43,6 +48,21 @@ def test_extract_text_from_pdf_multiple_pages():
         assert results[1]["extracted_text"] == ""
     finally:
         os.remove(pdf_path)
+
+
+def test_render_pdf_page_returns_png_and_rejects_missing_pages(tmp_path):
+    pdf_path = tmp_path / "calendar.pdf"
+    writer = PyPDF2.PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    with pdf_path.open("wb") as file:
+        writer.write(file)
+
+    image, page_count = render_pdf_page(str(pdf_path), 1)
+
+    assert image.startswith(b"\x89PNG\r\n\x1a\n")
+    assert page_count == 1
+    with pytest.raises(PDFPageNotFoundError):
+        render_pdf_page(str(pdf_path), 2)
 
 
 def test_ocr_page_renders_locally_and_returns_recognized_text(monkeypatch):

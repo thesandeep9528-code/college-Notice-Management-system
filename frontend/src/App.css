@@ -318,9 +318,13 @@ textarea.form-control { resize: vertical; line-height: 1.6; }
 .notice-edit-form { display: grid; gap: 8px; }
 .notice-edit-form label, .detail-modal label { margin-top: 5px; color: #424863; font-size: 11px; font-weight: 700; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.pdf-preview-modal { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(980px, 100%); height: min(90vh, 850px); padding: 20px; border: 1px solid #e8e9f0; border-radius: 12px; background: #fff; box-shadow: 0 20px 60px rgba(27,30,61,.2); }
+.pdf-preview-modal { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; width: min(980px, 100%); height: min(90vh, 850px); padding: 20px; border: 1px solid #e8e9f0; border-radius: 12px; background: #fff; box-shadow: 0 20px 60px rgba(27,30,61,.2); }
 .pdf-preview-modal .modal-heading { margin-bottom: 12px; }
-.pdf-preview-modal iframe { width: 100%; min-height: 0; border: 1px solid #e5e6ed; border-radius: 6px; background: #f7f7fa; }
+.pdf-preview-page { display: grid; min-height: 0; overflow: auto; place-items: center; border: 1px solid #e5e6ed; border-radius: 6px; background: #f7f7fa; }
+.pdf-preview-page img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.pdf-preview-page p { margin: 18px; color: #777e94; font-size: 12px; }
+.pdf-page-navigation { display: flex; align-items: center; justify-content: center; gap: 12px; padding-top: 12px; }
+.pdf-page-navigation span { min-width: 90px; color: #777e94; font-size: 11px; text-align: center; }
 .loading-row { padding: 18px 5px; color: #9096aa; font-size: 10px; }
 .toast { position: fixed; z-index: 20; right: 24px; bottom: 22px; display: flex; align-items: center; gap: 9px; max-width: min(420px, calc(100vw - 32px)); padding: 12px 16px 12px 12px; border: 1px solid #e6e7ef; border-radius: 9px; color: #4f556f; background: #fff; box-shadow: 0 8px 26px rgba(31,35,67,.13); font-size: 11px; animation: toast-in .22s ease-out; }
 .toast-check { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 7px; color: #318363; background: #e7f6ee; }

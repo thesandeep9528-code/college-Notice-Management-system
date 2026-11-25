@@ -1,7 +1,9 @@
 import logging
 import os
-import PyPDF2
+from io import BytesIO
 from typing import List, Dict
+
+import PyPDF2
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,45 @@ if pytesseract is not None:
 
 class PDFProcessingError(Exception):
     """Raised when a PDF cannot be opened or processed."""
+
+
+class PDFPageNotFoundError(PDFProcessingError):
+    """Raised when a requested PDF page does not exist."""
+
+
+def render_pdf_page(pdf_path: str, page_number: int) -> tuple[bytes, int]:
+    """Render a one-based PDF page as PNG and return its total page count."""
+    if pdfium is None:
+        raise PDFProcessingError("PDF preview dependencies are unavailable")
+    if not os.path.isfile(pdf_path):
+        raise PDFProcessingError(f"File not found: {pdf_path}")
+
+    document = None
+    page = None
+    image = None
+    try:
+        document = pdfium.PdfDocument(pdf_path)
+        page_count = len(document)
+        if page_number < 1 or page_number > page_count:
+            raise PDFPageNotFoundError(f"PDF page {page_number} does not exist")
+        page = document[page_number - 1]
+        image = page.render(scale=2).to_pil()
+        output = BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue(), page_count
+    except PDFPageNotFoundError:
+        raise
+    except (IndexError, OSError, RuntimeError, ValueError) as error:
+        raise PDFProcessingError(
+            f"Unable to render PDF page {page_number}: {error}"
+        ) from error
+    finally:
+        if image is not None:
+            image.close()
+        if page is not None:
+            page.close()
+        if document is not None:
+            document.close()
 
 
 def _ocr_page(pdf_path: str, page_number: int) -> str:

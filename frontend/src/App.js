@@ -102,6 +102,24 @@ async function fetchNoticePdf(noticeId, token, download = false) {
   return response.blob();
 }
 
+async function fetchNoticePage(noticeId, pageNumber, token) {
+  const response = await fetch(`${API_BASE}/notices/${noticeId}/pages/${pageNumber}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload.detail || `Request failed (${response.status})`);
+    error.status = response.status;
+    notifyExpiredSession(response.status, token);
+    throw error;
+  }
+  const pageCount = Number(response.headers.get('X-PDF-Page-Count'));
+  if (!Number.isInteger(pageCount) || pageCount < pageNumber) {
+    throw new Error('The PDF preview returned an invalid page count.');
+  }
+  return { blob: await response.blob(), pageCount };
+}
+
 function Icon({ name, size = 19 }) {
   const common = {
     width: size,
@@ -420,14 +438,45 @@ function EmptyState({ icon = 'file', title, description, action }) {
   return <div className="empty-state"><span className="empty-icon"><Icon name={icon} size={24} /></span><h3>{title}</h3><p>{description}</p>{action}</div>;
 }
 
-function PdfPreviewDialog({ preview, onClose }) {
+function PdfPreviewDialog({ preview, token, onClose, onPageChange, onDownload }) {
+  const [pageData, setPageData] = useState({ loading: false, error: '', url: '', pageCount: 0 });
+
+  useEffect(() => {
+    if (!preview) return undefined;
+    let active = true;
+    let objectUrl = '';
+    setPageData({ loading: true, error: '', url: '', pageCount: 0 });
+    fetchNoticePage(preview.notice.id, preview.pageNumber, token)
+      .then(({ blob, pageCount }) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPageData({ loading: false, error: '', url: objectUrl, pageCount });
+      })
+      .catch((error) => {
+        if (active) setPageData({ loading: false, error: error.message, url: '', pageCount: 0 });
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [preview?.notice?.id, preview?.pageNumber, token]);
+
   if (!preview) return null;
   return (
     <div className="modal-backdrop">
       <section className="pdf-preview-modal" role="dialog" aria-modal="true" aria-labelledby="pdf-preview-title">
         <div className="modal-heading"><div><span className="eyebrow">NOTICE ATTACHMENT</span><h2 id="pdf-preview-title">{preview.filename}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close PDF preview"><Icon name="close" /></button></div>
-        <iframe title={`Preview of ${preview.filename}`} src={preview.url} />
-        <div className="modal-actions"><a className="button button-primary" href={preview.url} download={preview.filename}>Download PDF</a><button className="button button-soft" onClick={onClose}>Close</button></div>
+        <div className="pdf-preview-page" aria-live="polite">
+          {pageData.url
+            ? <img src={pageData.url} alt={`${preview.filename}, page ${preview.pageNumber}`} />
+            : <p role={pageData.error ? 'alert' : 'status'}>{pageData.error || 'Rendering PDF page…'}</p>}
+        </div>
+        <div className="pdf-page-navigation">
+          <button className="button button-soft" disabled={pageData.loading || preview.pageNumber <= 1} onClick={() => onPageChange(-1)}>Previous page</button>
+          <span>Page {preview.pageNumber} of {pageData.pageCount || '…'}</span>
+          <button className="button button-soft" disabled={pageData.loading || !pageData.pageCount || preview.pageNumber >= pageData.pageCount} onClick={() => onPageChange(1)}>Next page</button>
+        </div>
+        <div className="modal-actions"><button className="button button-primary" onClick={() => onDownload(preview.notice)}>Download PDF</button><button className="button button-soft" onClick={onClose}>Close</button></div>
       </section>
     </div>
   );
@@ -476,22 +525,20 @@ function StudentWorkspace({ page, setPage, token, user }) {
     return () => { active = false; window.clearTimeout(timer); };
   }, [filters, page, token]);
 
-  useEffect(() => () => {
-    if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-  }, [pdfPreview]);
-
-  const openPdfPreview = async (notice, pageNumber = null) => {
+  const openPdfPreview = (notice, pageNumber = 1) => {
     setError('');
-    try {
-      const blob = await fetchNoticePdf(notice.id, token);
-      const url = URL.createObjectURL(blob);
-      setPdfPreview({
-        filename: notice.file_name || `${notice.title}.pdf`,
-        url: pageNumber ? `${url}#page=${pageNumber}` : url,
-      });
-    } catch (requestError) {
-      setError(requestError.message);
-    }
+    setPdfPreview({
+      notice,
+      filename: notice.file_name || `${notice.title}.pdf`,
+      pageNumber,
+    });
+  };
+
+  const changePdfPreviewPage = (offset) => {
+    setPdfPreview((current) => current && ({
+      ...current,
+      pageNumber: current.pageNumber + offset,
+    }));
   };
 
   const downloadPdf = async (notice) => {
@@ -604,7 +651,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
         </section>
         {error && <div className="inline-error assistant-error" role="alert">{error}</div>}
         <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} onAskAbout={askAboutNotice} />
-        <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+        <PdfPreviewDialog preview={pdfPreview} token={token} onClose={() => setPdfPreview(null)} onPageChange={changePdfPreviewPage} onDownload={downloadPdf} />
       </div>
     );
   }
@@ -649,7 +696,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
             : <EmptyState icon={hasFilters ? 'search' : 'file'} title={hasFilters ? 'No matching notices' : 'It’s quiet for now'} description={hasFilters ? 'Try adjusting your search or filters to find another notice.' : 'Approved campus announcements will appear here as soon as they’re published.'} action={hasFilters && <button className="text-button" onClick={clearFilters}>Clear filters</button>} />}
       </section>
       <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} onAskAbout={askAboutNotice} />
-      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+      <PdfPreviewDialog preview={pdfPreview} token={token} onClose={() => setPdfPreview(null)} onPageChange={changePdfPreviewPage} onDownload={downloadPdf} />
     </div>
   );
 }
@@ -723,10 +770,6 @@ function FacultyWorkspace({ page, setPage, token, notify }) {
     }
   }, [editingNotice, page]);
 
-  useEffect(() => () => {
-    if (pdfPreview) URL.revokeObjectURL(pdfPreview.url);
-  }, [pdfPreview]);
-
   const updateForm = (key, value) => setNoticeForm((current) => ({ ...current, [key]: value }));
 
   const selectPdf = (event) => {
@@ -751,13 +794,32 @@ function FacultyWorkspace({ page, setPage, token, notify }) {
     setSelectedPdf(file);
   };
 
-  const openPdfPreview = async (notice) => {
+  const openPdfPreview = (notice) => {
+    setPdfPreview({
+      notice,
+      filename: notice.file_name || `${notice.title}.pdf`,
+      pageNumber: 1,
+    });
+  };
+
+  const changePdfPreviewPage = (offset) => {
+    setPdfPreview((current) => current && ({
+      ...current,
+      pageNumber: current.pageNumber + offset,
+    }));
+  };
+
+  const downloadPdf = async (notice) => {
     try {
-      const blob = await fetchNoticePdf(notice.id, token);
-      setPdfPreview({
-        url: URL.createObjectURL(blob),
-        filename: notice.file_name || `${notice.title}.pdf`,
-      });
+      const blob = await fetchNoticePdf(notice.id, token, true);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = notice.file_name || `${notice.title}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       notify(error.message, 'error');
     }
@@ -870,7 +932,7 @@ function FacultyWorkspace({ page, setPage, token, notify }) {
           </form>
           <aside className="form-aside"><span className="aside-spark"><Icon name="spark" size={20} /></span><h3>Make it easy to scan.</h3><p>A helpful title and a few clear details make it easier for students to find the information that matters.</p><div className="review-steps"><div><span>01</span><p><b>You publish</b><small>Your notice is posted immediately.</small></p></div><div><span>02</span><p><b>Students find it</b><small>It appears on the approved notice board.</small></p></div><div><span>03</span><p><b>Keep it current</b><small>Edit or remove your notice any time.</small></p></div></div></aside>
         </div>
-        <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+        <PdfPreviewDialog preview={pdfPreview} token={token} onClose={() => setPdfPreview(null)} onPageChange={changePdfPreviewPage} onDownload={downloadPdf} />
       </div>
     );
   }
@@ -894,7 +956,7 @@ function FacultyWorkspace({ page, setPage, token, notify }) {
           : notices.length ? <div className="notice-grid">{notices.map((notice) => <NoticeCard key={notice.id} notice={notice} faculty actionBusy={busyNoticeId === notice.id} onPreview={openPdfPreview} onEdit={editNotice} onDelete={deleteNotice} />)}</div>
             : <EmptyState icon={hasFilters ? 'search' : 'file'} title={hasFilters ? 'No matching notices' : 'No notices yet'} description={hasFilters ? 'Try another search or status filter.' : 'Create your first notice and publish it for students.'} action={<button className="text-button" onClick={() => { setEditingNotice(null); setNoticeForm(EMPTY_NOTICE); setPage('create'); }}>Create a notice <Icon name="arrow" size={15} /></button>} />}
       </div>
-      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+      <PdfPreviewDialog preview={pdfPreview} token={token} onClose={() => setPdfPreview(null)} onPageChange={changePdfPreviewPage} onDownload={downloadPdf} />
       </>
     );
   }
@@ -916,7 +978,7 @@ function FacultyWorkspace({ page, setPage, token, notify }) {
             : <EmptyState icon="file" title="No notices yet" description="Your latest published notices will appear here." action={<button className="text-button" onClick={() => setPage('create')}>Create a notice <Icon name="arrow" size={15} /></button>} />}
         </section>
       </>}
-      <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
+      <PdfPreviewDialog preview={pdfPreview} token={token} onClose={() => setPdfPreview(null)} onPageChange={changePdfPreviewPage} onDownload={downloadPdf} />
     </div>
   );
 }
