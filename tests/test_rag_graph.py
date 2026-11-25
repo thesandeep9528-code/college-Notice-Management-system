@@ -114,7 +114,7 @@ def test_graph_retries_once_then_returns_not_found(monkeypatch):
     }
 
 
-def test_generation_failure_returns_source_excerpts(monkeypatch):
+def test_generation_failure_returns_concise_fallback(monkeypatch):
     class FailedCompletions:
         def create(self, **kwargs):
             raise OpenAIError("temporary provider failure")
@@ -134,8 +134,36 @@ def test_generation_failure_returns_source_excerpts(monkeypatch):
         }
     )
 
-    assert result["generation_mode"] == "excerpts"
-    assert "September 12" in result["answer"]
+    assert result == {
+        "generation_mode": "fallback",
+        "answer": rag_graph.ANSWER_UNAVAILABLE,
+    }
+
+
+def test_unavailable_openai_key_does_not_return_notice_text(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = rag_graph.generate_answer(
+        {
+            "question": "When does registration open?",
+            "sources": [{"excerpt": "Registration opens on September 12."}],
+        }
+    )
+
+    assert result == {
+        "answer": rag_graph.ANSWER_UNAVAILABLE,
+        "generation_mode": "fallback",
+    }
+
+
+def test_ungrounded_fallback_does_not_repeat_notice_text():
+    result = rag_graph.fallback_answer(
+        {"sources": [{"excerpt": "The notice contains the full announcement."}]}
+    )
+
+    assert result == {"answer": rag_graph.NOT_FOUND_ANSWER}
+    assert "full announcement" not in result["answer"]
+    assert "couldn't verify a complete answer" not in result["answer"]
 
 
 def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
@@ -171,12 +199,17 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
     class FakeCompletions:
         def create(self, **kwargs):
             assert kwargs["max_tokens"] == 160
+            system_prompt = kwargs["messages"][0]["content"].lower()
+            assert "short bullet points" in system_prompt
+            assert "one useful fact per bullet" in system_prompt
+            assert "repeat or quote the notice verbatim" in system_prompt
+            assert "i couldn't verify a complete answer" not in system_prompt
             assert "[Source 1: Registration schedule, page 2]" in kwargs["messages"][1]["content"]
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content="Registration opens on September 12 [Source 1, page 2]."
+                            content="- Registration opens on September 12 [Source 1, page 2]."
                         )
                     )
                 ]
@@ -215,6 +248,7 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
 
     result = rag_graph.answer_question("When does registration open?")
 
+    assert result["answer"].startswith("- ")
     assert "September 12" in result["answer"]
     assert result["sources"] == [
         {
@@ -384,8 +418,8 @@ def test_graph_summarizes_selected_pdf_with_one_grounded_model_call(
                     SimpleNamespace(
                         message=SimpleNamespace(
                             content=(
-                                "Semester classes begin on July 14, 2026, and "
-                                "examinations start on December 3, 2026 [Source 1]."
+                                "- Classes begin on July 14, 2026 [Source 1].\n"
+                                "- Examinations start on December 3, 2026 [Source 1]."
                             )
                         )
                     )

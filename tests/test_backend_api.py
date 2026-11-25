@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -499,6 +500,26 @@ def test_faculty_provisioning_cli_creates_a_faculty_account(client, monkeypatch)
 def test_student_assistant_returns_pdf_page_citations(client, monkeypatch):
     from backend.services import rag_graph
 
+    class FakeCompletions:
+        def create(self, **kwargs):
+            assert "Registration opens September 12" in kwargs["messages"][1]["content"]
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="- Registration opens on September 12 [Source 1]."
+                        )
+                    )
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-key"
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(rag_graph, "OpenAI", FakeOpenAI)
     monkeypatch.setattr(rag_graph, "get_chroma_collection", lambda: None)
     faculty_headers = _login(client, "faculty@example.edu")
     student_headers = _login(client)
@@ -524,6 +545,7 @@ def test_student_assistant_returns_pdf_page_citations(client, monkeypatch):
         json={"question": "When does registration open?", "notice_id": notice_id},
     )
     assert response.status_code == 200
+    assert response.json()["answer"].startswith("- ")
     assert "September 12" in response.json()["answer"]
     assert response.json()["sources"][0]["notice_id"] == notice_id
     assert response.json()["sources"][0]["page_number"] == 1

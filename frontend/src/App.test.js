@@ -62,7 +62,7 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     if (url.endsWith('/rag')) {
       return jsonResponse({
         question: 'What date is the exam?',
-        answer: 'December 12.',
+        answer: '- Final examination: December 12 [Source 1].',
         sources: [{
           notice_id: notice.id,
           title: notice.title,
@@ -125,6 +125,10 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     const ragRequest = fetchMock.mock.calls.find(([url]) => url.endsWith('/rag'));
     expect(ragRequest).toBeTruthy();
     expect(JSON.parse(ragRequest[1].body).notice_id).toBe(notice.id);
+    expect(container.querySelector('.chat-assistant p').textContent)
+      .toBe('- Final examination: December 12 [Source 1].');
+    expect(container.querySelector('.chat-source').textContent.trim()).toBe('Open notice');
+    expect(container.textContent).not.toContain('The final examination is on December 12.');
 
     await act(async () => {
       Simulate.click(container.querySelector('.chat-source'));

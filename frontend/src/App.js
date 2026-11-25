@@ -581,19 +581,6 @@ function StudentWorkspace({ page, setPage, token, user }) {
     setPage('home');
   };
 
-  const openSource = async (source) => {
-    try {
-      const notice = await apiRequest(`/notices/${source.notice_id}`, token);
-      if (source.page_number && source.has_file) {
-        await openPdfPreview(notice, source.page_number);
-      } else {
-        setSelectedNotice(notice);
-      }
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  };
-
   const askQuestion = async (event) => {
     event.preventDefault();
     if (!question.trim() || !assistantNotice || asking) return;
@@ -643,11 +630,11 @@ function StudentWorkspace({ page, setPage, token, user }) {
             {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message chat-${message.role}`}>
               <span className="answer-label">{message.role === 'user' ? 'YOU' : <><Icon name="spark" size={15} /> NOTICE ASSISTANT</>}</span>
               <p role={message.error ? 'alert' : undefined}>{message.content}</p>
-              {message.sources?.length > 0 && <div className="chat-sources"><strong>Sources</strong>{message.sources.map((source) => <button className="chat-source" key={`${source.notice_id}-${source.page_number || 'notice'}`} onClick={() => openSource(source)}><span>{source.title}{source.page_number ? ` · page ${source.page_number}` : ''}</span><small>{source.excerpt}</small><span className="source-link">Open notice <Icon name="arrow" size={13} /></span></button>)}</div>}
+              {message.role === 'assistant' && assistantNotice?.has_file && <div className="chat-sources"><button className="chat-source" aria-label={`Open ${assistantNotice.title} PDF`} onClick={() => openPdfPreview(assistantNotice, message.sources?.[0]?.page_number || 1)}><span className="source-link">Open notice <Icon name="arrow" size={13} /></span></button></div>}
             </article>)}
             {asking && <div className="chat-message chat-assistant" role="status"><span className="answer-label"><Icon name="spark" size={15} /> NOTICE ASSISTANT</span><p>Searching approved notices…</p></div>}
           </div>
-          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers are grounded only in the selected approved notice. PDF page sources are shown when available.</div>
+          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers use only the selected approved notice. Open the notice below to view its PDF.</div>
         </section>
         {error && <div className="inline-error assistant-error" role="alert">{error}</div>}
         <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} onAskAbout={askAboutNotice} />
