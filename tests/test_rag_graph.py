@@ -28,7 +28,16 @@ def test_question_analysis_uses_prior_user_questions_only():
     assert result == {
         "retrieval_query": "Tell me about registration. When does it open?",
         "retry_count": 0,
+        "summary_mode": False,
     }
+
+
+def test_question_analysis_detects_summary_queries():
+    result = rag_graph.analyze_question(
+        {"question": "Summarize this notice"},
+    )
+
+    assert result["summary_mode"] is True
 
 
 def test_answer_evaluation_requires_a_valid_grounded_source():
@@ -81,6 +90,9 @@ def test_retry_routing_has_a_fixed_attempt_limit():
     ) == "retry"
     assert rag_graph.route_after_evaluation(
         {"grounded": False, "retry_count": 2}
+    ) == "fallback"
+    assert rag_graph.route_after_evaluation(
+        {"grounded": False, "summary_mode": True, "retry_count": 1}
     ) == "fallback"
 
 
@@ -267,6 +279,148 @@ def test_selected_notice_limits_chroma_sync_and_retrieval(monkeypatch):
     assert indexed == [notices[0]]
     assert search_filters[0]["$and"][0] == {"notice_id": {"$in": [17]}}
     assert {source["notice_id"] for source in result["sources"]} == {17}
+
+
+def test_summary_retrieval_uses_full_text_from_only_the_selected_pdf(
+    monkeypatch,
+    tmp_path,
+):
+    pdf_path = tmp_path / "calendar.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    notice = {
+        "id": 17,
+        "title": "Academic calendar",
+        "file_name": "calendar.pdf",
+        "file_path": "calendar.pdf",
+    }
+    full_text = (
+        "Semester classes begin on July 14, 2026. "
+        "End-semester examinations begin on December 3, 2026."
+    )
+    monkeypatch.setattr(rag_graph, "get_notices_by_status", lambda status: [notice])
+    monkeypatch.setattr(rag_graph, "_pdf_path", lambda file_path: pdf_path)
+    monkeypatch.setattr(
+        rag_graph,
+        "_extract_pdf_pages",
+        lambda file_path, modified_time: ((1, full_text),),
+    )
+    monkeypatch.setattr(
+        rag_graph,
+        "get_chroma_collection",
+        lambda: pytest.fail("Summary retrieval should not query vector embeddings"),
+    )
+
+    result = rag_graph.retrieve_documents(
+        {
+            "question": "Summarize this notice",
+            "retrieval_query": "Summarize this notice",
+            "notice_id": 17,
+            "top_k": 5,
+            "retry_count": 0,
+            "summary_mode": True,
+        }
+    )
+
+    assert result["generation_mode"] == "openai"
+    assert result["sources"] == [
+        {
+            "notice_id": 17,
+            "title": "Academic calendar",
+            "file_name": "calendar.pdf",
+            "page_number": 1,
+            "has_file": True,
+            "excerpt": full_text,
+            "_evidence": full_text,
+        }
+    ]
+
+
+def test_summary_grounding_uses_full_pdf_evidence():
+    full_text = "Semester classes begin on July 14, 2026."
+    result = rag_graph.evaluate_answer(
+        {
+            "question": "Summarize this notice",
+            "retrieval_query": "Summarize this notice",
+            "summary_mode": True,
+            "sources": [
+                {
+                    "excerpt": full_text[:20],
+                    "_evidence": full_text,
+                }
+            ],
+            "answer": "Semester classes begin on July 14, 2026 [Source 1].",
+            "generation_mode": "openai",
+        }
+    )
+
+    assert result["grounded"] is True
+
+
+def test_graph_summarizes_selected_pdf_with_one_grounded_model_call(
+    monkeypatch,
+    tmp_path,
+):
+    pdf_path = tmp_path / "calendar.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4")
+    notice = {
+        "id": 17,
+        "title": "Academic calendar",
+        "file_name": "calendar.pdf",
+        "file_path": "calendar.pdf",
+    }
+    full_text = (
+        "Semester classes begin on July 14, 2026. "
+        "Examinations start on December 3, 2026."
+    )
+    model_calls = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            model_calls.append(kwargs)
+            prompt = kwargs["messages"][1]["content"]
+            assert full_text in prompt
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                "Semester classes begin on July 14, 2026, and "
+                                "examinations start on December 3, 2026 [Source 1]."
+                            )
+                        )
+                    )
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-key"
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(rag_graph, "get_notices_by_status", lambda status: [notice])
+    monkeypatch.setattr(rag_graph, "_pdf_path", lambda file_path: pdf_path)
+    monkeypatch.setattr(
+        rag_graph,
+        "_extract_pdf_pages",
+        lambda file_path, modified_time: ((1, full_text),),
+    )
+    monkeypatch.setattr(
+        rag_graph,
+        "get_chroma_collection",
+        lambda: pytest.fail("Summary should not invoke embedding retrieval"),
+    )
+    monkeypatch.setattr(rag_graph, "OpenAI", FakeOpenAI)
+
+    result = rag_graph.answer_question(
+        "Summarize this notice",
+        notice_id=17,
+    )
+
+    assert result["answer"].endswith("[Source 1].")
+    assert len(model_calls) == 1
+    assert result["sources"][0]["excerpt"] == full_text
+    assert "_evidence" not in result["sources"][0]
 
 
 def test_chroma_search_uses_supported_include_fields(monkeypatch):

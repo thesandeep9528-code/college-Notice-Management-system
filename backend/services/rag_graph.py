@@ -8,7 +8,15 @@ from langgraph.graph import END, START, StateGraph
 from openai import OpenAI, OpenAIError
 
 from ..database.queries import get_notices_by_status
-from .rag import _excerpt, _pdf_path, _query_terms, _score, retrieve_sources
+from .rag import (
+    _excerpt,
+    _extract_pdf_pages,
+    _notice_metadata_text,
+    _pdf_path,
+    _query_terms,
+    _score,
+    retrieve_sources,
+)
 from .rag_index import get_chroma_collection, sync_approved_notices
 
 
@@ -23,8 +31,13 @@ else:
 MAX_RETRIEVAL_ATTEMPTS = 2
 MAX_TOP_K = 20
 MAX_ANSWER_TOKENS = 160
+MAX_SUMMARY_CONTEXT_CHARS = 12000
 NOT_FOUND_ANSWER = "I couldn't find that information in the approved notices."
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source\s+(\d+)[^\]]*\]", re.IGNORECASE)
+SUMMARY_QUERY_PATTERN = re.compile(
+    r"\b(?:summary|summarize|summarise|summarizing|summarising|overview)\b",
+    re.IGNORECASE,
+)
 MONTH_NAMES = {
     "january",
     "february",
@@ -48,6 +61,7 @@ class RagGraphState(TypedDict, total=False):
     top_k: int
     retrieval_query: str
     retry_count: int
+    summary_mode: bool
     sources: list[dict]
     context: str
     answer: str
@@ -66,6 +80,7 @@ def analyze_question(state: RagGraphState) -> dict:
             [*previous_questions, state["question"].strip()]
         ),
         "retry_count": 0,
+        "summary_mode": bool(SUMMARY_QUERY_PATTERN.search(state["question"])),
     }
 
 
@@ -76,6 +91,62 @@ def _local_sources(state: RagGraphState, top_k: int) -> list[dict]:
         history=state.get("history"),
         notice_id=state.get("notice_id"),
     )
+
+
+def _summary_sources(notices: list[dict]) -> list[dict]:
+    sources = []
+    remaining_chars = MAX_SUMMARY_CONTEXT_CHARS
+    for notice in notices:
+        pdf_path = _pdf_path(notice.get("file_path"))
+        pages = ()
+        if pdf_path:
+            try:
+                pages = _extract_pdf_pages(
+                    str(pdf_path),
+                    pdf_path.stat().st_mtime_ns,
+                )
+            except OSError as error:
+                logger.warning(
+                    "Unable to read PDF metadata for notice %s: %s",
+                    notice["id"],
+                    error,
+                )
+
+        for page_number, text in pages:
+            if remaining_chars <= 0:
+                break
+            evidence = text.strip()[:remaining_chars]
+            if not evidence:
+                continue
+            sources.append(
+                {
+                    "notice_id": int(notice["id"]),
+                    "title": notice["title"],
+                    "file_name": notice.get("file_name") if pdf_path else None,
+                    "page_number": page_number,
+                    "has_file": bool(pdf_path),
+                    "excerpt": evidence[:600],
+                    "_evidence": evidence,
+                }
+            )
+            remaining_chars -= len(evidence)
+
+        if not pages and remaining_chars > 0:
+            evidence = _notice_metadata_text(notice).strip()[:remaining_chars]
+            if evidence:
+                sources.append(
+                    {
+                        "notice_id": int(notice["id"]),
+                        "title": notice["title"],
+                        "file_name": notice.get("file_name") if pdf_path else None,
+                        "page_number": None,
+                        "has_file": bool(pdf_path),
+                        "excerpt": evidence[:600],
+                        "_evidence": evidence,
+                    }
+                )
+                remaining_chars -= len(evidence)
+    return sources
 
 
 def _search_similar(query: str, top_k: int, where: dict) -> list[dict]:
@@ -162,6 +233,13 @@ def retrieve_documents(state: RagGraphState) -> dict:
             "generation_mode": "unavailable",
         }
 
+    if state.get("summary_mode"):
+        return {
+            "sources": _summary_sources(notices),
+            "retry_count": retry_count + 1,
+            "generation_mode": "openai",
+        }
+
     collection = get_chroma_collection()
     if collection is None:
         return {
@@ -211,7 +289,9 @@ def prepare_context(state: RagGraphState) -> dict:
         source_label = f"[Source {index}: {source['title']}"
         if source.get("page_number"):
             source_label += f", page {source['page_number']}"
-        context_sources.append(f"{source_label}]\n{source['excerpt']}")
+        context_sources.append(
+            f"{source_label}]\n{source.get('_evidence', source['excerpt'])}"
+        )
     return {"context": "\n\n".join(context_sources)}
 
 
@@ -315,12 +395,19 @@ def evaluate_answer(state: RagGraphState) -> dict:
             answer_numbers.issubset(source_numbers)
             and answer_months.issubset(source_terms)
             and overlap >= 0.3
-            and bool(_score(source_text, query_terms))
+            and (
+                state.get("summary_mode")
+                or bool(_score(source_text, query_terms))
+            )
         )
 
     if cited_source_numbers:
         cited_text = " ".join(
-            sources[number - 1]["excerpt"] for number in cited_source_numbers
+            sources[number - 1].get(
+                "_evidence",
+                sources[number - 1]["excerpt"],
+            )
+            for number in cited_source_numbers
         )
         if not supports_answer(cited_text):
             return {"grounded": False}
@@ -329,7 +416,7 @@ def evaluate_answer(state: RagGraphState) -> dict:
     matching_sources = [
         (index, source)
         for index, source in enumerate(sources, start=1)
-        if supports_answer(source["excerpt"])
+        if supports_answer(source.get("_evidence", source["excerpt"]))
     ]
     if len(matching_sources) != 1:
         return {"grounded": False}
@@ -344,6 +431,8 @@ def evaluate_answer(state: RagGraphState) -> dict:
 def route_after_evaluation(state: RagGraphState) -> str:
     if state.get("grounded"):
         return "done"
+    if state.get("summary_mode"):
+        return "fallback"
     if state.get("retry_count", 0) < MAX_RETRIEVAL_ATTEMPTS:
         return "retry"
     return "fallback"
@@ -406,5 +495,12 @@ def answer_question(
     )
     return {
         "answer": result.get("answer", NOT_FOUND_ANSWER),
-        "sources": result.get("sources", []),
+        "sources": [
+            {
+                key: value
+                for key, value in source.items()
+                if not key.startswith("_")
+            }
+            for source in result.get("sources", [])
+        ],
     }
