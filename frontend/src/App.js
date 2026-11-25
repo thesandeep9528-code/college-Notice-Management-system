@@ -326,7 +326,7 @@ function StatCard({ icon, label, value, note, tone }) {
   return <article className="stat-card"><span className={`stat-icon ${tone}`}><Icon name={icon} size={20} /></span><div className="stat-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
-function NoticeCard({ notice, admin = false, faculty = false, student = false, actionBusy = false, onApprove, onReject, onView, onDelete, onEdit, onPreview }) {
+function NoticeCard({ notice, admin = false, faculty = false, student = false, actionBusy = false, onApprove, onReject, onView, onDelete, onEdit, onPreview, onAskAbout }) {
   const category = notice.category || 'Campus update';
   return (
     <article className="notice-card">
@@ -349,7 +349,7 @@ function NoticeCard({ notice, admin = false, faculty = false, student = false, a
         {notice.status === 'rejected' && onEdit && <button className="button button-soft" onClick={() => onEdit(notice)}>Edit & resubmit</button>}
         {['pending', 'rejected'].includes(notice.status) && onDelete && <button className="button button-reject" disabled={actionBusy} onClick={() => onDelete(notice)}>Delete</button>}
       </div>}
-      {student && <div className="notice-actions"><button className="button button-soft" onClick={() => onView(notice)}>View details</button>{notice.has_file && onPreview && <button className="button button-soft" onClick={() => onPreview(notice)}>Preview PDF</button>}</div>}
+      {student && <div className="notice-actions"><button className="button button-soft" onClick={() => onView(notice)}>View details</button><button className="button button-primary" onClick={() => onAskAbout(notice)}><Icon name="spark" size={15} /> Ask AI</button>{notice.has_file && onPreview && <button className="button button-soft" onClick={() => onPreview(notice)}>Preview PDF</button>}</div>}
     </article>
   );
 }
@@ -371,7 +371,7 @@ function PdfPreviewDialog({ preview, onClose }) {
   );
 }
 
-function StudentNoticeDetails({ notice, onClose, onPreview, onDownload }) {
+function StudentNoticeDetails({ notice, onClose, onPreview, onDownload, onAskAbout }) {
   if (!notice) return null;
   return (
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -379,7 +379,7 @@ function StudentNoticeDetails({ notice, onClose, onPreview, onDownload }) {
         <div className="modal-heading"><div><span className="eyebrow">APPROVED NOTICE</span><h2 id="student-notice-title">{notice.title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close notice details"><Icon name="close" /></button></div>
         <p className="notice-detail-description">{notice.description || 'No description provided.'}</p>
         <dl className="detail-list"><dt>Category</dt><dd>{notice.category || 'Not set'}</dd><dt>Department</dt><dd>{notice.department || 'All departments'}</dd><dt>Semester</dt><dd>{notice.semester || 'All semesters'}</dd><dt>Deadline</dt><dd>{notice.deadline || 'No deadline listed'}</dd><dt>Published</dt><dd>{notice.created_at || 'Not recorded'}</dd></dl>
-        {notice.has_file && <div className="modal-actions"><button className="button button-primary" onClick={() => onPreview(notice)}>Preview PDF</button><button className="button button-soft" onClick={() => onDownload(notice)}>Download PDF</button></div>}
+        <div className="modal-actions"><button className="button button-primary" onClick={() => onAskAbout(notice)}><Icon name="spark" size={16} /> Ask AI about this notice</button>{notice.has_file && <><button className="button button-soft" onClick={() => onPreview(notice)}>Preview PDF</button><button className="button button-soft" onClick={() => onDownload(notice)}>Download PDF</button></>}</div>
       </section>
     </div>
   );
@@ -395,6 +395,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
   const [messages, setMessages] = useState([]);
   const [asking, setAsking] = useState(false);
   const [selectedNotice, setSelectedNotice] = useState(null);
+  const [assistantNotice, setAssistantNotice] = useState(null);
   const [pdfPreview, setPdfPreview] = useState(null);
 
   useEffect(() => {
@@ -457,6 +458,20 @@ function StudentWorkspace({ page, setPage, token, user }) {
     }
   };
 
+  const askAboutNotice = (notice) => {
+    setAssistantNotice(notice);
+    setSelectedNotice(null);
+    setMessages([]);
+    setError('');
+    setPage('assistant');
+  };
+
+  const chooseAnotherNotice = () => {
+    setAssistantNotice(null);
+    setMessages([]);
+    setPage('home');
+  };
+
   const openSource = async (source) => {
     try {
       const notice = await apiRequest(`/notices/${source.notice_id}`, token);
@@ -472,7 +487,7 @@ function StudentWorkspace({ page, setPage, token, user }) {
 
   const askQuestion = async (event) => {
     event.preventDefault();
-    if (!question.trim()) return;
+    if (!question.trim() || !assistantNotice || asking) return;
     const userMessage = { role: 'user', content: question.trim() };
     const history = messages.slice(-8).map(({ role, content }) => ({ role, content }));
     setMessages((current) => [...current, userMessage]);
@@ -481,7 +496,11 @@ function StudentWorkspace({ page, setPage, token, user }) {
     try {
       const response = await apiRequest('/rag', token, {
         method: 'POST',
-        body: JSON.stringify({ question: userMessage.content, history }),
+        body: JSON.stringify({
+          question: userMessage.content,
+          notice_id: assistantNotice.id,
+          history,
+        }),
       });
       setMessages((current) => [...current, {
         role: 'assistant',
@@ -503,12 +522,13 @@ function StudentWorkspace({ page, setPage, token, user }) {
   if (page === 'assistant') {
     return (
       <div className="assistant-page">
-        <PageHeading eyebrow="YOUR NOTICE ASSISTANT" title={<>Answers, without<br className="desktop-break" /> the notice hunt.</>} description="Search approved notice text and PDF pages locally. Answers include matching excerpts and sources; notice text is not sent to an external AI service." action={messages.length > 0 && <button className="button button-soft" disabled={asking} onClick={() => setMessages([])}>Clear conversation</button>} />
+        <PageHeading eyebrow="YOUR NOTICE ASSISTANT" title={<>Answers, without<br className="desktop-break" /> the notice hunt.</>} description="Choose a notice from your filtered notice board. The assistant will use only that notice and its PDF." action={<div className="assistant-heading-actions">{assistantNotice && <button className="button button-soft" disabled={asking} onClick={chooseAnotherNotice}>Choose another notice</button>}{messages.length > 0 && <button className="button button-soft" disabled={asking} onClick={() => setMessages([])}>Clear conversation</button>}</div>} />
         <section className="assistant-card">
           <div className="assistant-orb"><Icon name="spark" size={28} /></div>
           <span className="eyebrow">APPROVED NOTICE SEARCH</span><h2>What would you like to know?</h2><p>Try asking about exam schedules, registration deadlines, or campus events.</p>
-          <div className="prompt-suggestions">{['When is the next exam?', 'Any upcoming campus events?', 'What are the latest notices?'].map((prompt) => <button key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Icon name="arrow" size={14} /></button>)}</div>
-          <form className="assistant-form" onSubmit={askQuestion}><input aria-label="Ask about notices" placeholder="Ask anything about campus notices…" value={question} onChange={(event) => setQuestion(event.target.value)} /><button className="button button-primary" disabled={asking || !question.trim()}>{asking ? 'Searching…' : <><Icon name="send" size={16} /> Ask</>}</button></form>
+          {assistantNotice ? <div className="assistant-selected-notice"><Icon name="file" size={16} /><span><strong>Using this notice only</strong><small>{assistantNotice.title}{assistantNotice.file_name ? ` · ${assistantNotice.file_name}` : ''}</small></span></div> : <div className="assistant-select-prompt"><p>Select a notice from the notice board first. You can filter by category, department, semester, or search.</p><button className="button button-soft" onClick={() => setPage('home')}>Browse filtered notices</button></div>}
+          {assistantNotice && <div className="prompt-suggestions">{['Summarize this notice', 'What date or deadline is mentioned?', 'Explain the key requirements'].map((prompt) => <button key={prompt} onClick={() => setQuestion(prompt)}>{prompt}<Icon name="arrow" size={14} /></button>)}</div>}
+          <form className="assistant-form" onSubmit={askQuestion}><input aria-label="Ask about notices" placeholder={assistantNotice ? 'Ask about this notice…' : 'Choose a notice to start'} value={question} onChange={(event) => setQuestion(event.target.value)} disabled={!assistantNotice || asking} /><button className="button button-primary" disabled={!assistantNotice || asking || !question.trim()}>{asking ? 'Searching…' : <><Icon name="send" size={16} /> Ask</>}</button></form>
           <div className="chat-transcript" aria-live="polite">
             {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message chat-${message.role}`}>
               <span className="answer-label">{message.role === 'user' ? 'YOU' : <><Icon name="spark" size={15} /> NOTICE ASSISTANT</>}</span>
@@ -517,10 +537,10 @@ function StudentWorkspace({ page, setPage, token, user }) {
             </article>)}
             {asking && <div className="chat-message chat-assistant" role="status"><span className="answer-label"><Icon name="spark" size={15} /> NOTICE ASSISTANT</span><p>Searching approved notices…</p></div>}
           </div>
-          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers are excerpts from approved notices and may not cover information that is not published.</div>
+          <div className="assistant-disclaimer"><Icon name="shield" size={14} /> Answers are grounded only in the selected approved notice. PDF page sources are shown when available.</div>
         </section>
         {error && <div className="inline-error assistant-error" role="alert">{error}</div>}
-        <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} />
+        <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} onAskAbout={askAboutNotice} />
         <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
       </div>
     );
@@ -562,10 +582,10 @@ function StudentWorkspace({ page, setPage, token, user }) {
         </div>
         {error && <div className="inline-error" role="alert">{error}</div>}
         {loading ? <div className="notice-grid">{[1, 2, 3].map((item) => <div key={item} className="skeleton-card" />)}</div>
-          : displayNotices.length ? <div className="notice-grid">{displayNotices.map((notice) => <NoticeCard key={notice.id} notice={notice} student onView={openNotice} onPreview={openPdfPreview} />)}</div>
+          : displayNotices.length ? <div className="notice-grid">{displayNotices.map((notice) => <NoticeCard key={notice.id} notice={notice} student onView={openNotice} onPreview={openPdfPreview} onAskAbout={askAboutNotice} />)}</div>
             : <EmptyState icon={hasFilters ? 'search' : 'file'} title={hasFilters ? 'No matching notices' : 'It’s quiet for now'} description={hasFilters ? 'Try adjusting your search or filters to find another notice.' : 'Approved campus announcements will appear here as soon as they’re published.'} action={hasFilters && <button className="text-button" onClick={clearFilters}>Clear filters</button>} />}
       </section>
-      <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} />
+      <StudentNoticeDetails notice={selectedNotice} onClose={() => setSelectedNotice(null)} onPreview={openPdfPreview} onDownload={downloadPdf} onAskAbout={askAboutNotice} />
       <PdfPreviewDialog preview={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );

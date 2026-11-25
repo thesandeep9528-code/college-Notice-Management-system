@@ -123,6 +123,7 @@ def retrieve_sources(
     question: str,
     top_k: int = 5,
     history: Optional[list[dict]] = None,
+    notice_id: Optional[int] = None,
 ) -> list[dict]:
     """Return matching excerpts from approved notices without external model calls."""
     previous_questions = [
@@ -136,6 +137,8 @@ def retrieve_sources(
 
     candidates = []
     for notice in get_notices_by_status(status="approved"):
+        if notice_id is not None and int(notice["id"]) != notice_id:
+            continue
         metadata_text = _notice_metadata_text(notice)
         pdf_path = _pdf_path(notice.get("file_path"))
         pages = ()

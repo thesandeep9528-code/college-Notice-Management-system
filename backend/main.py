@@ -332,6 +332,7 @@ class ChatTurn(BaseModel):
 
 class RagRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
+    notice_id: int = Field(ge=1)
     top_k: Optional[int] = Field(default=5, ge=1, le=20)
     history: List[ChatTurn] = Field(default_factory=list, max_length=8)
 
@@ -764,10 +765,15 @@ async def rag_query(
     payload: RagRequest,
     user=Depends(require_role(["student"])),
 ):
+    notice = get_notice_by_id(payload.notice_id)
+    if not notice or notice["status"] != "approved":
+        raise HTTPException(status_code=404, detail="Approved notice not found")
+
     result = answer_question(
         payload.question,
         top_k=payload.top_k if payload.top_k is not None else 5,
         history=[turn.model_dump() for turn in payload.history],
+        notice_id=payload.notice_id,
     )
     return {"question": payload.question, **result}
 

@@ -507,6 +507,7 @@ def test_student_notice_sorting_and_local_assistant_sources(client):
         headers=student_headers,
         json={
             "question": "When does registration open?",
+            "notice_id": published_ids[0],
             "history": [{"role": "user", "content": "Tell me about registration."}],
         },
     )
@@ -517,10 +518,51 @@ def test_student_notice_sorting_and_local_assistant_sources(client):
     assert all(source["notice_id"] != pending["id"] for source in result["sources"])
     assert result["sources"][0]["excerpt"]
 
+    unscoped = client.post(
+        "/rag",
+        headers=student_headers,
+        json={"question": "When does registration open?"},
+    )
+    assert unscoped.status_code == 422
+    cross_notice_question = client.post(
+        "/rag",
+        headers=student_headers,
+        json={
+            "question": "When does the library close?",
+            "notice_id": published_ids[0],
+        },
+    )
+    assert cross_notice_question.status_code == 200
+    assert cross_notice_question.json()["sources"] == []
+    assert "8 PM" not in cross_notice_question.json()["answer"]
+    library_answer = client.post(
+        "/rag",
+        headers=student_headers,
+        json={
+            "question": "When does the library close?",
+            "notice_id": published_ids[1],
+        },
+    )
+    assert library_answer.status_code == 200
+    assert "8 PM" in library_answer.json()["answer"]
+    assert {
+        source["notice_id"] for source in library_answer.json()["sources"]
+    } == {published_ids[1]}
+
+    unavailable_notice = client.post(
+        "/rag",
+        headers=student_headers,
+        json={"question": "What is this about?", "notice_id": pending["id"]},
+    )
+    assert unavailable_notice.status_code == 404
+
     assert client.post(
         "/rag",
         headers=faculty_headers,
-        json={"question": "When does registration open?"},
+        json={
+            "question": "When does registration open?",
+            "notice_id": published_ids[0],
+        },
     ).status_code == 403
 
 
@@ -554,7 +596,7 @@ def test_student_assistant_returns_pdf_page_citations(client):
     response = client.post(
         "/rag",
         headers=student_headers,
-        json={"question": "When does registration open?"},
+        json={"question": "When does registration open?", "notice_id": notice_id},
     )
     assert response.status_code == 200
     assert "September 12" in response.json()["answer"]

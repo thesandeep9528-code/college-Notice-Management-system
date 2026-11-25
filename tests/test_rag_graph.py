@@ -195,6 +195,59 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
     ]
 
 
+def test_selected_notice_limits_chroma_sync_and_retrieval(monkeypatch):
+    notices = [
+        {"id": 17, "title": "Registration schedule"},
+        {"id": 18, "title": "Library hours"},
+    ]
+    indexed = []
+    search_filters = []
+    monkeypatch.setattr(rag_graph, "get_notices_by_status", lambda status: notices)
+    monkeypatch.setattr(rag_graph, "get_chroma_collection", lambda: object())
+    monkeypatch.setattr(
+        rag_graph,
+        "sync_approved_notices",
+        lambda scoped_notices, collection: indexed.extend(scoped_notices) or True,
+    )
+    monkeypatch.setattr(rag_graph, "_pdf_path", lambda file_path: None)
+
+    def search(query, top_k, where):
+        search_filters.append(where)
+        return [
+            {
+                "document": "Registration closes on September 12.",
+                "metadata": {
+                    "notice_id": 17,
+                    "page_number": 1,
+                    "source": "sqlite_approved",
+                },
+            },
+            {
+                "document": "Library closes at 8 PM.",
+                "metadata": {
+                    "notice_id": 18,
+                    "page_number": 1,
+                    "source": "sqlite_approved",
+                },
+            },
+        ]
+
+    monkeypatch.setattr(rag_graph, "_search_similar", search)
+    result = rag_graph.retrieve_documents(
+        {
+            "question": "When does registration close?",
+            "retrieval_query": "When does registration close?",
+            "notice_id": 17,
+            "top_k": 5,
+            "retry_count": 0,
+        }
+    )
+
+    assert indexed == [notices[0]]
+    assert search_filters[0]["$and"][0] == {"notice_id": {"$in": [17]}}
+    assert {source["notice_id"] for source in result["sources"]} == {17}
+
+
 def test_sync_indexes_approved_pdf_pages_once(monkeypatch, tmp_path):
     class FakeCollection:
         def __init__(self):

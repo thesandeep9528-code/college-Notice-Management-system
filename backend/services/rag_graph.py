@@ -42,6 +42,7 @@ MONTH_NAMES = {
 
 class RagGraphState(TypedDict, total=False):
     question: str
+    notice_id: int
     history: list[dict]
     top_k: int
     retrieval_query: str
@@ -72,6 +73,7 @@ def _local_sources(state: RagGraphState, top_k: int) -> list[dict]:
         state["question"],
         top_k=top_k,
         history=state.get("history"),
+        notice_id=state.get("notice_id"),
     )
 
 
@@ -149,6 +151,9 @@ def retrieve_documents(state: RagGraphState) -> dict:
             "generation_mode": "unavailable",
         }
     notices = get_notices_by_status(status="approved")
+    notice_id = state.get("notice_id")
+    if notice_id is not None:
+        notices = [notice for notice in notices if int(notice["id"]) == notice_id]
     if not notices:
         return {
             "sources": [],
@@ -360,10 +365,12 @@ def answer_question(
     question: str,
     top_k: int = 5,
     history: list[dict] | None = None,
+    notice_id: int | None = None,
 ) -> dict:
     result = _compiled_graph().invoke(
         {
             "question": question,
+            "notice_id": notice_id,
             "top_k": top_k,
             "history": history or [],
             "retry_count": 0,
