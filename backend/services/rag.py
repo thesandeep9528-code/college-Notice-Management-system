@@ -111,7 +111,11 @@ def _excerpt(text: str, terms: list[str]) -> str:
         enumerate(sentences),
         key=lambda item: (-_score(item[1], terms), item[0]),
     )
-    best = [sentence for _, sentence in ranked if _score(sentence, terms)]
+    specific_terms = [term for term in terms if len(term) > 4]
+    if specific_terms:
+        best = [sentence for sentence in sentences if any(term in sentence.lower() for term in specific_terms)]
+    else:
+        best = [sentence for _, sentence in ranked if _score(sentence, terms)]
     excerpt = " ".join(best) if best else " ".join(text.split())
     return excerpt[:4000]
 
