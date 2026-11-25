@@ -412,7 +412,11 @@ def test_graph_summarizes_selected_pdf_with_one_grounded_model_call(
         def create(self, **kwargs):
             model_calls.append(kwargs)
             prompt = kwargs["messages"][1]["content"]
+            system_prompt = kwargs["messages"][0]["content"].lower()
             assert full_text in prompt
+            assert "the student asked for a summary" in system_prompt
+            assert "summarize the main points" in system_prompt
+            assert "instead of using the unavailable-detail fallback" in system_prompt
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(

@@ -314,6 +314,14 @@ def generate_answer(state: RagGraphState) -> dict:
         if turn.get("role") == "user" and turn.get("content")
     ]
     conversation_context = "\n".join(previous_questions) or "(none)"
+    summary_instruction = (
+        "The student asked for a summary. Summarize the main points in the supplied "
+        "notice, including relevant dates, deadlines, and requirements. If the source "
+        "contains notice content, provide supported summary bullets instead of using "
+        "the unavailable-detail fallback."
+        if state.get("summary_mode")
+        else "Answer the student's specific question directly."
+    )
     try:
         response = OpenAI(api_key=api_key).chat.completions.create(
             model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
@@ -328,8 +336,9 @@ def generate_answer(state: RagGraphState) -> dict:
                         "short bullet points, one useful fact per bullet. Start with the "
                         "answer; do not add an introduction or conclusion, and do not "
                         "repeat or quote the notice verbatim. Cite each factual bullet "
-                        "as [Source N], using only the "
-                        "supplied source numbers. Do not add a page or title inside the "
+                        "as [Source N], using only the supplied source numbers. "
+                        f"{summary_instruction} "
+                        "Do not add a page or title inside the "
                         "citation. If the detail is not supported, reply exactly: "
                         "'The selected notice doesn't provide that detail.' Do not "
                         "invent dates, deadlines, or policies."
