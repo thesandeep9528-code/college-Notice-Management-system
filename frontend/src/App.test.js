@@ -62,7 +62,7 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     if (url.endsWith('/rag')) {
       return jsonResponse({
         question: 'What date is the exam?',
-        answer: '1. Exam date: December 12 [Source 1].',
+        answer: '1. **Exam date**: December 12 [Source 1]. 2. **Result date**: December 20 [Source 1].',
         sources: [{
           notice_id: notice.id,
           title: notice.title,
@@ -125,8 +125,12 @@ it('sends chatbot questions scoped to the notice selected from the board', async
     const ragRequest = fetchMock.mock.calls.find(([url]) => url.endsWith('/rag'));
     expect(ragRequest).toBeTruthy();
     expect(JSON.parse(ragRequest[1].body).notice_id).toBe(notice.id);
-    expect(container.querySelector('.chat-assistant p').textContent)
-      .toBe('1. Exam date: December 12 [Source 1].');
+    const answerPoints = container.querySelectorAll('.chat-answer-point');
+    expect(answerPoints).toHaveLength(2);
+    expect(answerPoints[0].querySelector('strong').textContent).toBe('1. Exam date');
+    expect(answerPoints[0].querySelector('span').textContent).toBe(': December 12 [Source 1].');
+    expect(answerPoints[1].querySelector('strong').textContent).toBe('2. Result date');
+    expect(answerPoints[1].querySelector('span').textContent).toBe(': December 20 [Source 1].');
     expect(container.querySelector('.chat-source .source-link').textContent.trim()).toBe('Open notice');
     expect(container.querySelector('.chat-source small').textContent).toBe('exam-schedule.pdf · Page 1');
     expect(container.textContent).not.toContain('The final examination is on December 12.');

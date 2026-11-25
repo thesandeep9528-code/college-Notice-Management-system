@@ -214,6 +214,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .chat-message { padding: 14px 16px; border: 1px solid #e9e8f6; border-radius: 9px; background: #fff; }
 .chat-user { margin-left: 12%; border-color: #e4e2fb; background: #f7f6ff; }
 .chat-message p { margin: 8px 0 0; color: #596078; font-size: 11px; line-height: 1.8; white-space: pre-wrap; }
+.chat-answer-points { display: grid; gap: 5px; margin-top: 8px; color: #596078; font-size: 11px; line-height: 1.8; }
+.chat-answer-point strong { color: #3d4260; }
+.chat-answer-point span { font-weight: 400; white-space: pre-wrap; }
 .chat-sources { display: grid; gap: 8px; margin-top: 13px; }
 .chat-sources > strong { color: #696f86; font-size: 10px; }
 .chat-source { display: grid; gap: 4px; width: fit-content; padding: 8px 10px; border: 1px solid #ececf4; border-radius: 7px; color: #565d77; background: #fff; text-align: left; cursor: pointer; }

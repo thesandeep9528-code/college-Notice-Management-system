@@ -29,6 +29,32 @@ const SHOW_DEMO_CREDENTIALS = process.env.NODE_ENV === 'development'
   && process.env.REACT_APP_SHOW_DEMO_CREDENTIALS === 'true'
   && DEMO_ACCOUNTS.every(({ email, password }) => email && password);
 
+function ChatAnswer({ content, error }) {
+  const headingPattern = /(?:^|\s)(\d+)\.\s+\*\*([^*]+)\*\*:?\s*/g;
+  const points = Array.from(content.matchAll(headingPattern));
+  const role = error ? 'alert' : undefined;
+
+  if (points.length === 0) return <p role={role}>{content}</p>;
+
+  const preamble = content.slice(0, points[0].index).trim();
+  return (
+    <div className="chat-answer-points" role={role}>
+      {preamble && <p>{preamble}</p>}
+      {points.map((point, index) => {
+        const contentStart = point.index + point[0].length;
+        const contentEnd = points[index + 1]?.index ?? content.length;
+        const detail = content.slice(contentStart, contentEnd).trim();
+        return (
+          <div className="chat-answer-point" key={`${point[1]}-${index}`}>
+            <strong>{point[1]}. {point[2]}</strong>
+            {detail && <span>: {detail}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function notifyExpiredSession(status, token) {
   if (
     status === 401
@@ -629,7 +655,9 @@ function StudentWorkspace({ page, setPage, token, user }) {
           <div className="chat-transcript" aria-live="polite">
             {messages.map((message, index) => <article key={`${index}-${message.role}`} className={`chat-message chat-${message.role}`}>
               <span className="answer-label">{message.role === 'user' ? 'YOU' : <><Icon name="spark" size={15} /> NOTICE ASSISTANT</>}</span>
-              <p role={message.error ? 'alert' : undefined}>{message.content}</p>
+              {message.role === 'assistant'
+                ? <ChatAnswer content={message.content} error={message.error} />
+                : <p>{message.content}</p>}
               {message.role === 'assistant' && assistantNotice?.has_file && <div className="chat-sources"><button className="chat-source" aria-label={`Open ${message.sources?.[0]?.file_name || assistantNotice.file_name || assistantNotice.title} PDF`} onClick={() => openPdfPreview(assistantNotice, message.sources?.[0]?.page_number || 1)}><span className="source-link">Open notice <Icon name="arrow" size={13} /></span><small>{message.sources?.[0]?.file_name || assistantNotice.file_name || 'PDF'}{message.sources?.[0]?.page_number ? ` · Page ${message.sources[0].page_number}` : ''}</small></button></div>}
             </article>)}
             {asking && <div className="chat-message chat-assistant" role="status"><span className="answer-label"><Icon name="spark" size={15} /> NOTICE ASSISTANT</span><p>Searching approved notices…</p></div>}
