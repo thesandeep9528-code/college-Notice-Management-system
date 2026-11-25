@@ -148,6 +148,8 @@ def retrieve_sources(
                 for page_number, page_text in pages
             ]
             page_matches = [match for match in page_matches if match[2]]
+            if not page_matches and pages:
+                page_matches = [(page_number, page_text, 1) for page_number, page_text in pages]
             documents = page_matches or [
                 (None, metadata_text, _score(metadata_text, terms))
             ]
