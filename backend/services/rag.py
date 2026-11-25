@@ -113,7 +113,7 @@ def _excerpt(text: str, terms: list[str]) -> str:
     )
     best = [sentence for _, sentence in ranked if _score(sentence, terms)]
     excerpt = " ".join(best) if best else " ".join(text.split())
-    return excerpt[:600]
+    return excerpt[:4000]
 
 
 def retrieve_sources(
