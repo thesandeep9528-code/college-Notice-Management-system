@@ -45,10 +45,30 @@ def test_answer_evaluation_requires_a_valid_grounded_source():
 
     assert rag_graph.evaluate_answer(state)["grounded"] is True
     assert rag_graph.evaluate_answer(
+        {
+            **state,
+            "answer": "Registration opens on September 12 [Source 1, page 2].",
+        }
+    )["grounded"] is True
+    uncited = rag_graph.evaluate_answer(
+        {**state, "answer": "Registration opens on September 12."}
+    )
+    assert uncited == {
+        "grounded": True,
+        "answer": "Registration opens on September 12. [Source 1]",
+    }
+    assert rag_graph.evaluate_answer(
         {**state, "answer": "Registration opens on September 12 [Source 2]."}
     )["grounded"] is False
     assert rag_graph.evaluate_answer(
         {**state, "answer": "Registration opens on October 5 [Source 1]."}
+    )["grounded"] is False
+    assert rag_graph.evaluate_answer(
+        {
+            **state,
+            "sources": [source, source.copy()],
+            "answer": "Registration opens on September 12.",
+        }
     )["grounded"] is False
 
 
@@ -144,7 +164,7 @@ def test_graph_generates_answer_from_approved_chroma_sources(monkeypatch):
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content="Registration opens on September 12 [Source 1]."
+                            content="Registration opens on September 12 [Source 1, page 2]."
                         )
                     )
                 ]
