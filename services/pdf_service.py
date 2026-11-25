@@ -3,6 +3,8 @@ import os
 from io import BytesIO
 from typing import List, Dict
 
+import PyPDF2
+
 try:
     import pdfplumber
 except ImportError:  # pragma: no cover
