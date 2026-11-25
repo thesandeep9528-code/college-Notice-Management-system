@@ -32,6 +32,15 @@ def test_add_and_get_user():
     # Password is stored hashed; it should not equal the plain text
     assert fetched["password_hash"] != pwd
 
+
+def test_database_initialization_does_not_seed_an_admin_account():
+    assert get_user_by_email("admin@example.com") is None
+
+    connection.init_db()
+
+    assert get_user_by_email("admin@example.com") is None
+
+
 def test_add_and_query_notice():
     # First, create a user to be the uploader
     uploader_id = add_user("uploader@example.com", "pwd", "faculty")
@@ -106,7 +115,8 @@ def test_schema_upgrade_preserves_existing_users_and_notices(tmp_path, monkeypat
             FOREIGN KEY (uploaded_by) REFERENCES users(id)
         );
         INSERT INTO users (email, password_hash, role) VALUES
-            ('existing@example.edu', 'legacy-hash', 'faculty');
+            ('existing@example.edu', 'legacy-hash', 'faculty'),
+            ('preserved-admin@example.edu', 'legacy-admin-hash', 'admin');
         INSERT INTO notices (title, uploaded_by, status) VALUES
             ('Existing notice', 1, 'pending');
         """
@@ -117,9 +127,11 @@ def test_schema_upgrade_preserves_existing_users_and_notices(tmp_path, monkeypat
     connection.init_db()
 
     existing_user = get_user_by_email("existing@example.edu")
+    existing_admin = get_user_by_email("preserved-admin@example.edu")
     existing_notice = get_notice_by_id(1)
     assert existing_user["name"] == ""
     assert existing_user["email"] == "existing@example.edu"
+    assert existing_admin["role"] == "admin"
     assert existing_notice["title"] == "Existing notice"
     assert existing_notice["rejection_reason"] is None
     assert existing_notice["file_name"] is None

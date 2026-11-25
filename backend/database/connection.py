@@ -30,7 +30,7 @@ def _add_column_if_missing(conn, table: str, column: str, definition: str) -> No
 
 
 def init_db():
-    """Create or safely extend the local schema and seed an admin user."""
+    """Create or safely extend the local schema without deleting existing data."""
     conn = get_connection()
     try:
         conn.execute('''
@@ -98,24 +98,5 @@ def init_db():
             "ON notices(uploaded_by, status)"
         )
         conn.commit()
-
-        user = conn.execute(
-            "SELECT 1 FROM users WHERE email = ?", ("admin@example.com",)
-        ).fetchone()
-        if not user:
-            from .auth import hash_password
-
-            conn.execute(
-                "INSERT INTO users (email, password_hash, role, active, name) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    "admin@example.com",
-                    hash_password("admin123"),
-                    "admin",
-                    1,
-                    "Administrator",
-                ),
-            )
-            conn.commit()
     finally:
         conn.close()

@@ -17,7 +17,7 @@ from typing import List, Literal, Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from dotenv import load_dotenv
 
 from .database.auth import needs_rehash, verify_password
@@ -25,21 +25,14 @@ from .database.connection import init_db
 from .database.queries import (
     add_notice,
     add_user,
-    count_users_by_role,
     delete_notice,
-    delete_user,
-    get_all_users,
     get_notice_by_id,
     get_notice_counts,
     get_notices_by_status,
-    get_recent_activity,
     get_user_by_email,
     get_user_by_id,
     log_activity,
     resubmit_notice,
-    set_user_active,
-    update_notice,
-    update_notice_status,
     update_user,
 )
 from .services.rag_graph import answer_question
@@ -57,7 +50,7 @@ else:
     AUTH_SECRET_KEY = secrets.token_bytes(32)
 
 TOKEN_TTL_SECONDS = 8 * 60 * 60
-USER_ROLES = {"admin", "faculty", "student"}
+USER_ROLES = {"faculty", "student"}
 NOTICE_STATUSES = {"pending", "approved", "rejected"}
 NOTICE_UPLOAD_DIR = Path(
     os.getenv(
@@ -125,6 +118,8 @@ async def get_current_user(request: Request):
     account = get_user_by_id(decode_token(token.strip()))
     if not account or not account["active"]:
         raise HTTPException(status_code=401, detail="Account is unavailable")
+    if account["role"] not in USER_ROLES:
+        raise HTTPException(status_code=403, detail="This account role is no longer supported")
     return account
 
 
@@ -218,22 +213,6 @@ def _validate_email(email: str) -> str:
     return normalized
 
 
-def _prevent_last_active_admin_change(account: dict, changes: dict) -> None:
-    loses_admin_access = (
-        account["role"] == "admin"
-        and account["active"]
-        and (
-            changes.get("role", "admin") != "admin"
-            or changes.get("active", True) is False
-        )
-    )
-    if loses_admin_access and count_users_by_role("admin", active_only=True) <= 1:
-        raise HTTPException(
-            status_code=409,
-            detail="The last active administrator cannot be deactivated or demoted",
-        )
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
@@ -263,24 +242,22 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-class UserCreateRequest(BaseModel):
+class StudentRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=128)
-    role: Literal["student", "faculty", "admin"]
-    name: str = Field(default="", max_length=120)
+    name: str = Field(min_length=1, max_length=120)
     department: str = Field(default="", max_length=120)
     semester: str = Field(default="", max_length=20)
-    active: bool = True
 
-
-class UserUpdateRequest(BaseModel):
-    email: Optional[str] = Field(default=None, min_length=3, max_length=255)
-    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
-    role: Optional[Literal["student", "faculty", "admin"]] = None
-    name: Optional[str] = Field(default=None, max_length=120)
-    department: Optional[str] = Field(default=None, max_length=120)
-    semester: Optional[str] = Field(default=None, max_length=20)
-    active: Optional[bool] = None
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("A name is required")
+        return normalized
 
 
 class NoticeCreateRequest(BaseModel):
@@ -295,27 +272,6 @@ class NoticeCreateRequest(BaseModel):
     @classmethod
     def validate_deadline(cls, value):
         return _clean_deadline(value)
-
-
-class NoticeUpdateRequest(BaseModel):
-    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    description: Optional[str] = Field(default=None, max_length=10_000)
-    category: Optional[str] = Field(default=None, max_length=100)
-    department: Optional[str] = Field(default=None, max_length=120)
-    semester: Optional[str] = Field(default=None, max_length=20)
-    deadline: Optional[str] = Field(default=None, max_length=40)
-
-    @field_validator("deadline")
-    @classmethod
-    def validate_deadline(cls, value):
-        if value == "":
-            return ""
-        return _clean_deadline(value)
-
-
-class StatusUpdateRequest(BaseModel):
-    status: Literal["approved", "rejected"]
-    rejection_reason: Optional[str] = Field(default=None, max_length=1000)
 
 
 class ChatTurn(BaseModel):
@@ -351,6 +307,8 @@ async def login(data: LoginRequest):
         data.password, user["password_hash"]
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if user["role"] not in USER_ROLES:
+        raise HTTPException(status_code=403, detail="This account role is no longer supported")
     if needs_rehash(user["password_hash"]):
         update_user(user["id"], {"password": data.password})
     return {
@@ -365,15 +323,20 @@ async def current_user(user=Depends(get_current_user)):
     return _public_user(user)
 
 
-@app.get("/admin/dashboard")
-async def admin_dashboard(user=Depends(require_role(["admin"]))):
-    return {
-        "total_users": sum(count_users_by_role(role) for role in USER_ROLES),
-        "students": count_users_by_role("student"),
-        "faculty": count_users_by_role("faculty"),
-        "notices": get_notice_counts(),
-        "recent_activity": get_recent_activity(),
-    }
+@app.post("/register", status_code=201)
+async def register_student(payload: StudentRegistrationRequest):
+    try:
+        user_id = add_user(
+            email=_validate_email(payload.email),
+            password=payload.password,
+            role="student",
+            name=payload.name.strip(),
+            department=payload.department.strip(),
+            semester=payload.semester.strip(),
+        )
+    except sqlite3.IntegrityError as error:
+        raise HTTPException(status_code=409, detail="Email is already registered") from error
+    return _public_user(get_user_by_id(user_id))
 
 
 @app.get("/faculty/dashboard")
@@ -383,115 +346,6 @@ async def faculty_dashboard(user=Depends(require_role(["faculty"]))):
         **get_notice_counts(uploaded_by=user["id"]),
         "recent_notices": [_public_notice(notice) for notice in recent_notices],
     }
-
-
-@app.get("/users")
-async def list_users(
-    search: Optional[str] = None,
-    role: Optional[Literal["student", "faculty", "admin"]] = None,
-    active: Optional[bool] = None,
-    user=Depends(require_role(["admin"])),
-):
-    return get_all_users(search=search, role=role, active=active)
-
-
-@app.get("/users/{user_id}")
-async def get_user(user_id: int, user=Depends(require_role(["admin"]))):
-    account = get_user_by_id(user_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="User not found")
-    return _public_user(account)
-
-
-@app.post("/users", status_code=201)
-async def create_user(
-    payload: UserCreateRequest,
-    user=Depends(require_role(["admin"])),
-):
-    try:
-        user_id = add_user(
-            email=_validate_email(payload.email),
-            password=payload.password,
-            role=payload.role,
-            active=payload.active,
-            name=payload.name,
-            department=payload.department,
-            semester=payload.semester,
-        )
-    except sqlite3.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Email is already registered") from error
-    log_activity(user["id"], "created", "user", user_id, payload.role)
-    return _public_user(get_user_by_id(user_id))
-
-
-@app.put("/users/{user_id}")
-async def edit_user(
-    user_id: int,
-    payload: UserUpdateRequest,
-    user=Depends(require_role(["admin"])),
-):
-    account = get_user_by_id(user_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="User not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if not updates:
-        raise HTTPException(status_code=422, detail="Provide at least one field to update")
-    if any(value is None for value in updates.values()):
-        raise HTTPException(status_code=422, detail="Updated fields cannot be null")
-    if "email" in updates:
-        updates["email"] = _validate_email(updates["email"])
-    _prevent_last_active_admin_change(account, updates)
-    if user["id"] == user_id and (
-        updates.get("active") is False
-        or updates.get("role", "admin") != "admin"
-    ):
-        raise HTTPException(status_code=409, detail="You cannot remove your own admin access")
-    try:
-        if not update_user(user_id, updates):
-            raise HTTPException(status_code=404, detail="User not found")
-    except sqlite3.IntegrityError as error:
-        raise HTTPException(status_code=409, detail="Email is already registered") from error
-    log_activity(user["id"], "updated", "user", user_id)
-    return _public_user(get_user_by_id(user_id))
-
-
-@app.put("/users/{user_id}/activate")
-async def toggle_user_active(
-    user_id: int,
-    active: bool,
-    user=Depends(require_role(["admin"])),
-):
-    account = get_user_by_id(user_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user["id"] == user_id and not active:
-        raise HTTPException(status_code=409, detail="You cannot deactivate your own account")
-    _prevent_last_active_admin_change(account, {"active": active})
-    if not set_user_active(user_id, active):
-        raise HTTPException(status_code=404, detail="User not found")
-    log_activity(user["id"], "activated" if active else "deactivated", "user", user_id)
-    return {"id": user_id, "active": active}
-
-
-@app.delete("/users/{user_id}")
-async def remove_user(user_id: int, user=Depends(require_role(["admin"]))):
-    account = get_user_by_id(user_id)
-    if not account:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user["id"] == user_id:
-        raise HTTPException(status_code=409, detail="You cannot delete your own account")
-    if account["role"] == "admin" and account["active"]:
-        _prevent_last_active_admin_change(account, {"active": False})
-    try:
-        if not delete_user(user_id):
-            raise HTTPException(status_code=404, detail="User not found")
-    except sqlite3.IntegrityError as error:
-        raise HTTPException(
-            status_code=409,
-            detail="Deactivate this account instead; it owns notices",
-        ) from error
-    log_activity(user["id"], "deleted", "user", user_id, account["email"])
-    return {"deleted": user_id}
 
 
 @app.get("/notices")
@@ -574,10 +428,10 @@ async def create_notice(
         semester=payload.semester,
         deadline=payload.deadline,
         uploaded_by=user["id"],
-        status="pending",
+        status="approved",
     )
-    log_activity(user["id"], "submitted", "notice", notice_id, payload.title.strip())
-    return {"id": notice_id, "status": "pending"}
+    log_activity(user["id"], "published", "notice", notice_id, payload.title.strip())
+    return {"id": notice_id, "status": "approved"}
 
 
 @app.post("/notices/upload", status_code=201)
@@ -608,13 +462,13 @@ async def upload_notice(
             semester=(semester or "").strip() or None,
             deadline=clean_deadline,
             uploaded_by=user["id"],
-            status="pending",
+            status="approved",
             **attachment,
         )
     except sqlite3.Error as error:
         _delete_notice_pdf(attachment)
         raise HTTPException(status_code=500, detail="Unable to save the notice") from error
-    log_activity(user["id"], "submitted", "notice", notice_id, clean_title)
+    log_activity(user["id"], "published", "notice", notice_id, clean_title)
     return _public_notice(get_notice_by_id(notice_id))
 
 
@@ -633,11 +487,6 @@ async def resubmit_faculty_notice(
     notice = get_notice_by_id(notice_id)
     if not notice or notice["uploaded_by"] != user["id"]:
         raise HTTPException(status_code=404, detail="Notice not found")
-    if notice["status"] != "rejected":
-        raise HTTPException(
-            status_code=409,
-            detail="Only rejected notices can be edited and resubmitted",
-        )
     clean_title = title.strip()
     if not clean_title:
         raise HTTPException(status_code=422, detail="A notice title is required")
@@ -658,7 +507,7 @@ async def resubmit_faculty_notice(
     if attachment:
         updates.update(attachment)
     try:
-        updated = resubmit_notice(notice_id, updates)
+        updated = resubmit_notice(notice_id, user["id"], updates)
     except sqlite3.Error as error:
         if attachment:
             _delete_notice_pdf(attachment)
@@ -669,76 +518,8 @@ async def resubmit_faculty_notice(
         raise HTTPException(status_code=409, detail="Notice status changed; refresh and try again")
     if attachment:
         _delete_notice_pdf(notice)
-    log_activity(user["id"], "resubmitted", "notice", notice_id, clean_title)
+    log_activity(user["id"], "updated", "notice", notice_id, clean_title)
     return _public_notice(get_notice_by_id(notice_id))
-
-
-@app.put("/notices/{notice_id}/status")
-async def update_notice_status_endpoint(
-    notice_id: int,
-    payload: StatusUpdateRequest,
-    user=Depends(require_role(["admin"])),
-):
-    if payload.status == "rejected" and not (payload.rejection_reason or "").strip():
-        raise HTTPException(
-            status_code=422,
-            detail="A rejection reason is required",
-        )
-    notice = get_notice_by_id(notice_id)
-    if not notice:
-        raise HTTPException(status_code=404, detail="Notice not found")
-    if notice["status"] != "pending":
-        raise HTTPException(status_code=409, detail="Only pending notices can be reviewed")
-    if not update_notice_status(
-        notice_id,
-        payload.status,
-        (payload.rejection_reason or "").strip() or None,
-    ):
-        raise HTTPException(status_code=409, detail="Notice was already reviewed")
-    log_activity(
-        user["id"],
-        payload.status,
-        "notice",
-        notice_id,
-        (payload.rejection_reason or "").strip(),
-    )
-    return {"id": notice_id, "status": payload.status}
-
-
-@app.put("/notices/{notice_id}")
-async def edit_notice(
-    notice_id: int,
-    payload: NoticeUpdateRequest,
-    user=Depends(require_role(["admin"])),
-):
-    if not get_notice_by_id(notice_id):
-        raise HTTPException(status_code=404, detail="Notice not found")
-    updates = payload.model_dump(exclude_unset=True)
-    if not updates:
-        raise HTTPException(status_code=422, detail="Provide at least one field to update")
-    if any(value is None for value in updates.values()):
-        raise HTTPException(status_code=422, detail="Updated fields cannot be null")
-    if "title" in updates:
-        updates["title"] = updates["title"].strip()
-        if not updates["title"]:
-            raise HTTPException(status_code=422, detail="A notice title is required")
-    update_notice(notice_id, updates)
-    log_activity(user["id"], "updated", "notice", notice_id)
-    return get_notice_by_id(notice_id)
-
-
-@app.delete("/notices/{notice_id}")
-async def delete_notice_endpoint(
-    notice_id: int,
-    user=Depends(require_role(["admin"])),
-):
-    notice = get_notice_by_id(notice_id)
-    if not notice:
-        raise HTTPException(status_code=404, detail="Notice not found")
-    log_activity(user["id"], "deleted", "notice", notice_id, notice["title"])
-    delete_notice(notice_id)
-    _delete_notice_pdf(notice)
-    return {"deleted": notice_id}
 
 
 @app.delete("/notices/{notice_id}/faculty")
@@ -749,11 +530,6 @@ async def delete_faculty_notice(
     notice = get_notice_by_id(notice_id)
     if not notice or notice["uploaded_by"] != user["id"]:
         raise HTTPException(status_code=404, detail="Notice not found")
-    if notice["status"] == "approved":
-        raise HTTPException(
-            status_code=409,
-            detail="Approved notices must be removed by an administrator",
-        )
     log_activity(user["id"], "deleted", "notice", notice_id, notice["title"])
     delete_notice(notice_id)
     _delete_notice_pdf(notice)

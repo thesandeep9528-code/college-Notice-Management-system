@@ -17,17 +17,16 @@ The top-level `database/` and `services/` directories contain older or prototype
 - Protected requests resolve the account and reject inactive or deleted accounts.
 - Development uses a random process-only signing key if `AUTH_SECRET_KEY` is unset; restarting the API invalidates active sessions. Production must set `APP_ENV=production` and configure an `AUTH_SECRET_KEY` of at least 32 bytes.
 - Passwords use PBKDF2-SHA256. Existing SHA-256 password hashes remain usable and upgrade after a successful login.
-- Faculty notice creation derives the uploader from the authenticated account and always creates a pending notice.
-- Students can only list/read approved notices; faculty can only list/read their own notices and attachments; administrator routes require the admin role.
+- Student registration always creates a student account; submitted role fields are rejected. Faculty accounts are provisioned offline with `python -m backend.provision_faculty`.
+- Faculty notice creation derives the uploader from the authenticated account and publishes notices immediately.
+- Students can only list/read approved notices; faculty can only list/read their own notices and attachments. Admin routes and sign-in are disabled and backend authorization permits only the student and faculty roles.
 - CORS defaults to local React development origins. Configure `CORS_ORIGINS` for other deployments.
 
-## Admin role delivered
+## Admin access removal
 
-- Overview reports registered student/faculty counts, total/pending/approved/rejected notices, and recent audited actions.
-- Account directory supports searching by name/email/department, role/status filtering, details, editing, account activation, and account creation.
-- Notice archive supports search/status/category/department filters, metadata details/editing, and confirmed deletion.
-- Approval queue supports approval confirmation and rejection with a required reason.
-- Database upgrades add profile, notice metadata, and audit-log columns/tables without dropping existing users or notices.
+- The Admin role selector, workspace, user-management pages, and Admin API routes have been removed.
+- Existing Admin accounts and notice/audit data are preserved; legacy Admin accounts cannot sign in, and database initialization no longer seeds a default Admin account.
+- Students can self-register. Faculty accounts are created by college staff through the password-prompting provisioning CLI; there is no public Faculty or Admin registration.
 
 ## Faculty role delivered
 
@@ -35,10 +34,11 @@ The top-level `database/` and `services/` directories contain older or prototype
 - “My notices” is owner-scoped and supports search and status/category filters, approval status, and rejection feedback.
 - Notices can include an optional PDF up to 10 MiB. The server validates the extension, media type, and PDF signature, stores files under a generated private name, and serves them only through authenticated role-scoped routes.
 - The upload form includes upload progress and an in-browser PDF preview. Faculty can download/preview their attachments.
-- Faculty can edit/resubmit rejected notices; resubmission clears the rejection reason and returns the notice to pending review. They may delete their own pending or rejected notices; approved notices require Admin removal.
+- New and edited Faculty notices are published immediately. Faculty can edit their own notices regardless of their prior status, and can delete their own notices, including previously approved ones.
+- Legacy pending or rejected notices remain in the database; a Faculty owner can edit one to publish it. No bulk migration or deletion of existing notices is performed.
 - `NOTICE_UPLOAD_DIR` configures attachment storage. The default `backend/uploads/notices/` is gitignored; deployments should use persistent storage.
 
-## Remaining role and product work
+## Student role and assistant
 
 - Student notice explorer supports search, category/department/semester filters, newest/oldest sorting, profile-relevant prioritization, upcoming deadlines, notice details, and role-checked PDF preview/download.
 - `/rag` is restricted to students, requires a selected approved `notice_id`, and preserves the existing `{question, answer, sources}` response shape. The student selects a notice from the existing filtered notice board. SQLite remains the source of truth for notice metadata and approval status. Retrieval, PDF indexing, and answer context are limited to that one notice; when `OPENAI_API_KEY` is configured, only its metadata and extracted PDF page text are synchronized into the existing Chroma `notice_chunks` collection, retrieved with OpenAI embeddings, and used by OpenAI answer generation.
@@ -51,4 +51,4 @@ The top-level `database/` and `services/` directories contain older or prototype
 
 - Backend regression and API authorization tests: `python -m pytest -q`.
 - Frontend production build: `cd frontend; npm run build`.
-- API tests use isolated temporary SQLite files and cover token tampering, active-account invalidation, faculty ownership, PDF size/type checks and visibility, rejected-notice resubmission, student access boundaries, approved-notice assistant sources and sorting, Admin workflows, and additive schema migration.
+- API tests use isolated temporary SQLite files and cover token tampering, active-account invalidation, student-only registration, disabled Admin access with legacy-record preservation, immediate Faculty publishing, ownership checks, PDF size/type checks and visibility, legacy notice editing, student access boundaries, approved-notice assistant sources and sorting, and additive schema migration.

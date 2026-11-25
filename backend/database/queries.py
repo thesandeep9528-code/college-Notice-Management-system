@@ -234,17 +234,17 @@ def update_notice(notice_id: int, updates: dict) -> bool:
         return cur.rowcount > 0
 
 
-def resubmit_notice(notice_id: int, updates: dict) -> bool:
+def resubmit_notice(notice_id: int, uploaded_by: int, updates: dict) -> bool:
     if not updates or not set(updates).issubset(NOTICE_FIELDS):
         raise ValueError("Invalid notice fields")
     assignments = ", ".join(f"{field} = ?" for field in updates)
-    values = list(updates.values()) + [notice_id]
+    values = list(updates.values()) + [notice_id, uploaded_by]
     with db_session() as conn:
         cur = conn.execute(
             f"""
             UPDATE notices
-            SET {assignments}, status = 'pending', rejection_reason = NULL
-            WHERE id = ? AND status = 'rejected'
+            SET {assignments}, status = 'approved', rejection_reason = NULL
+            WHERE id = ? AND uploaded_by = ?
             """,
             values,
         )

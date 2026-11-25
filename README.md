@@ -24,32 +24,30 @@ A lightweight **React** web app for managing college notices and browsing approv
 ---
 
 ## Project Overview
-The system is built for a **single college** and provides three user roles:
+The system is built for a **single college** and provides two user roles:
 
 | Role | Capabilities |
 |------|--------------|
-| **Student** | View only **approved** notices, search, filter, sort, track upcoming deadlines, preview/download PDFs, and ask questions against approved notice content. |
-| **Faculty** | Submit notices with optional PDFs, track status, edit/resubmit rejected notices, and delete their own pending or rejected submissions. |
-| **Admin** | Manage users, activate/deactivate accounts, approve/reject notices, and view activity logs. |
+| **Student** | Register an account; view only **approved** notices, search, filter, sort, track upcoming deadlines, preview/download PDFs, and ask questions about a selected notice. |
+| **Faculty** | Create notices with optional PDFs, publish them immediately, edit or delete their own notices, and track their notice history. Faculty accounts are provisioned by the college. |
 
-All role‑based restrictions are enforced **server‑side** (see `backend/main.py`).
+All role‑based restrictions are enforced **server‑side** (see `backend/main.py`). There is no Admin workspace or public Faculty sign-up. Existing Admin account records are preserved in the database, but Admin sign-in and management APIs are disabled.
 
 ---
 
 ## Key Features
 | ✅ | Feature |
 |---|---------|
-| 📄 | Faculty can submit notices with metadata, deadlines, and optional PDFs (10 MiB limit), then track and manage permitted submissions. |
-| ✅ | Admin can **approve**, **reject** or **delete** notices. |
-| 📊 | Admin dashboard shows student/faculty totals, notice status counts, and recent audited actions. |
+| 📄 | Faculty can publish notices immediately with metadata, deadlines, and optional PDFs (10 MiB limit), then edit or delete their own notices. |
+| 👥 | Students can self-register; faculty accounts are created offline by college staff using `backend.provision_faculty`. |
 | 🔍 | Students can search by title/description, filter by category/department/semester, sort by date, prioritize profile-relevant notices, and see upcoming deadlines. |
-| 🤖 | Student assistant searches approved notice metadata, descriptions, and extractable PDF text locally and returns source excerpts with page references when available. |
+| 🤖 | Student assistant answers questions about a selected approved notice and returns source excerpts with PDF page references when available. |
 | 📑 | Students can view notice details and securely preview or download attached PDFs. |
 | 🗂️ | PDF extraction (`services/pdf_service.py`) with optional OCR fallback. |
 | 🧩 | Automatic notice intelligence (`services/notice_intelligence.py`) – categorisation, summary, deadline extraction, duplicate detection (file‑hash). |
-| 📦 | Vector store powered by **Chromadb** (`services/notice_embedding.py`). |
+| 📦 | Notice retrieval uses the existing ChromaDB collection when configured, with a local fallback. |
 | 🛡️ | API uses signed, expiring bearer tokens, active-account checks, role checks, and PBKDF2 password hashes. |
-| 📁 | Admin account and notice changes are recorded in the SQLite activity log. |
+| 📁 | Account and notice activity is recorded in the SQLite activity log. |
 
 ---
 
@@ -61,20 +59,12 @@ Student  ──► Search/Filter/Sort ► View Approved Notices
                └─► Ask question ► Local retrieval ► Grounded excerpts and sources
 ```
 ```text
-Faculty  ──► Create Notice ► Save (status = pending)
+Faculty  ──► Create Notice ► Publish immediately
                │
                └─► Optional PDF attachment is stored privately and served through an authorized API
 ```
-```text
-Admin    ──► Review Pending Notices ► Approve / Reject
-               │
-               └─► Approved → visible in the approved-notice list
-               │
-               └─► Rejected → excluded from student search
-```
-               The live API and UI are under `backend/` and `frontend/`. The top-level `database/` and `services/` folders contain older/prototype implementations and are not the database or RAG service currently used by the React app.
-> **Diagram:** *Notice Upload & Approval Workflow*  
-> ![Notice Upload & Approval Workflow](docs/images/notice_upload_approval.png)
+
+The live API and UI are under `backend/` and `frontend/`. The top-level `database/` and `services/` folders contain older/prototype implementations and are not the database or RAG service currently used by the React app.
 
 ---
 
@@ -126,7 +116,7 @@ With `OPENAI_API_KEY` configured, only the selected approved notice text is sent
 | **PDF extraction** | **PyPDF2** text extraction, with local OCR on image-only pages using **pypdfium2**, **pytesseract**, and the Tesseract OCR executable. |
 | **Intelligence** | SQLite (`services/sqlite_helper.py`) | Stores auto‑generated metadata (category, summary, deadline, hash). |
 | **Authentication** | HMAC-signed expiring bearer tokens; PBKDF2 password hashes with legacy SHA-256 upgrade on login. |
-| **Logging** | Admin audit events stored in the application SQLite database. |
+| **Logging** | Account and notice activity stored in the application SQLite database. |
 | **Testing** | `pytest` | Test suite under `tests/`. |
 
 > **Diagram:** *Technology Stack Overview*  
@@ -150,7 +140,7 @@ ai-college-notice/
 ├─ tests/                     # pytest suite
 ├─ docs/
 │   └─ images/                # Diagram PNGs referenced in README
-├─ logs/                      # Admin activity log
+├─ logs/                      # Application activity log
 ├─ .gitignore
 ├─ requirements.txt
 └─ README.md                  # ← **this file**
@@ -181,11 +171,11 @@ ai-college-notice/
    ```bash
    .venv\Scripts\python -c "from backend.database.connection import init_db; init_db()"
    ```
-   The backend initializes its schema additively at startup and creates a default admin when one does not exist:
+   The backend initializes its schema additively at startup and does not create a default Admin account. Students can register from the sign-in page. Provision a Faculty account from the project root:
+   ```bash
+   .venv\Scripts\python -m backend.provision_faculty --email faculty@example.edu --name "Faculty Name" --department "Computer Science"
    ```
-   email: admin@example.com
-   ```
-   The seeded admin password is for local development only. Set a unique password before allowing anyone else to access the app.
+   The command prompts for a password and confirmation without echoing either value. Existing Admin records are not deleted, but they can no longer sign in.
 
 ---
 
@@ -205,7 +195,7 @@ Create a **`.env`** file in the repository root (do **not** commit it).
 
 The active SQLite file is `backend/ai_notice.db`. Schema initialization adds missing columns/tables without dropping existing users or notices.
 
-For local development, the login page can show demo-account credentials from `frontend/.env.development.local`. Set `REACT_APP_SHOW_DEMO_CREDENTIALS=true` and provide `REACT_APP_DEMO_ADMIN_EMAIL`, `REACT_APP_DEMO_ADMIN_PASSWORD`, `REACT_APP_DEMO_FACULTY_EMAIL`, `REACT_APP_DEMO_FACULTY_PASSWORD`, `REACT_APP_DEMO_STUDENT_EMAIL`, and `REACT_APP_DEMO_STUDENT_PASSWORD`. This file is Git-ignored and only loaded by the React development server; do not copy credentials into this README or commit them. Anyone using the development server can see the credentials. Use only disposable local demo accounts and restart `npm start` after changing the file.
+For local development, the login page can show demo-account credentials from `frontend/.env.development.local`. Set `REACT_APP_SHOW_DEMO_CREDENTIALS=true` and provide `REACT_APP_DEMO_FACULTY_EMAIL`, `REACT_APP_DEMO_FACULTY_PASSWORD`, `REACT_APP_DEMO_STUDENT_EMAIL`, and `REACT_APP_DEMO_STUDENT_PASSWORD`. This file is Git-ignored and only loaded by the React development server; do not copy credentials into this README or commit them. Anyone using the development server can see the credentials. Use only disposable local demo accounts and restart `npm start` after changing the file.
 
 ---
 
@@ -230,7 +220,6 @@ The React app will be served at `http://localhost:3000` and communicate with the
 ## Screenshots & Diagrams
 | Description | Image |
 |-------------|-------|
-| **Notice Upload & Approval Workflow** | ![Notice Upload & Approval Workflow](docs/images/notice_upload_approval.png) |
 | **PDF Processing & RAG Pipeline** | ![PDF Processing & RAG Pipeline](docs/images/pdf_rag_pipeline.png) |
 | **Overall System Architecture** | ![Overall System Architecture](docs/images/system_architecture.png) |
 | **Technology Stack Overview** | ![Technology Stack Overview](docs/images/technology_stack.png) |
@@ -245,7 +234,7 @@ The React app will be served at `http://localhost:3000` and communicate with the
 | 🚧 | PDF upload, private storage, and role-checked preview/download. | Implemented for Faculty and students. |
 | 🚧 | Automatic notice categorisation, summarisation & deadline extraction – integrate into upload flow. | **Phase 10** – backend ready, UI pending. |
 | 🚧 | Duplicate‑notice detection using file hash. | Implemented in `notice_intelligence.py`. |
-| 🚧 | Semantic/vector retrieval using the legacy ChromaDB prototype. | Not connected to the active app; current retrieval is local keyword matching. |
+| 🚧 | Semantic/vector retrieval using the active ChromaDB-backed assistant. | Implemented with a local retrieval fallback. |
 | 🚧 | Deployment scripts (Docker, Kubernetes) | Not required for the current portfolio demo. |
 | 🚧 | Expand tests for authentication, permissions, notice workflows, sorting, and assistant sources. | Core API and source-visibility cases are covered; expand as features grow. |
 
