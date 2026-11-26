@@ -216,9 +216,13 @@ def get_notices_by_status(
 
 def get_notice_by_id(notice_id: int):
     with db_session() as conn:
-        return _row_dict(
-            conn.execute("SELECT * FROM notices WHERE id = ?", (notice_id,)).fetchone()
-        )
+        row = conn.execute("SELECT * FROM notices WHERE id = ?", (notice_id,)).fetchone()
+        notice = _row_dict(row)
+        # Ensure legacy columns exist
+        for col in ["deadline", "file_name", "file_size", "rejection_reason", "created_at"]:
+            if col not in notice:
+                notice[col] = None
+        return notice
 
 
 def update_notice(notice_id: int, updates: dict) -> bool:

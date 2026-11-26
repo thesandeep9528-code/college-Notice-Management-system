@@ -5,7 +5,7 @@ import os
 import uuid
 
 from .rag import _extract_pdf_pages, _notice_metadata_text, _pdf_path
-
+from services.pdf_service import extract_student_table_rows
 
 logger = logging.getLogger(__name__)
 INDEX_SOURCE = "sqlite_approved"
@@ -37,7 +37,32 @@ def _notice_documents(notice: dict, chunk_text) -> tuple[list[str], list[dict], 
             logger.warning("Unable to read PDF metadata for notice %s: %s", notice["id"], error)
 
     filename = notice.get("file_name") or ""
+
+    # Existing PDF page extraction
+    pages = ()
+    if pdf_path:
+        try:
+            pages = _extract_pdf_pages(str(pdf_path), pdf_path.stat().st_mtime_ns)
+        except OSError as error:
+            logger.warning("Unable to read PDF metadata for notice %s: %s", notice["id"], error)
+
+    # New structured rows extraction
+    structured_rows = []
+    if pdf_path:
+        try:
+            structured_rows = extract_student_table_rows(str(pdf_path))
+        except Exception as error:
+            logger.warning("Failed to extract student rows from notice %s: %s", notice["id"], error)
+
+    filename = notice.get("file_name") or ""
     texts = [(0, _notice_metadata_text(notice), "metadata")]
+    texts.extend((page_number, text, "pdf") for page_number, text in pages)
+    # Add a synthetic page for each structured row so they get chunked and stored
+    for row in structured_rows:
+        row_text = f"Roll {row['roll_number']} | {row['student_name']} | CT1 {row['ct1']} | CT2 {row['ct2']}"
+        # Use page_number 0 to indicate table row (metadata‑type)
+        texts.append((0, row_text, "table_row"))
+
     texts.extend((page_number, text, "pdf") for page_number, text in pages)
     fingerprint = hashlib.sha256(
         json.dumps(

@@ -510,9 +510,33 @@ def route_after_evaluation(state: RagGraphState) -> str:
 
 
 def fallback_answer(state: RagGraphState) -> dict:
+    """Generate a fallback answer when retrieval yields no useful sources.
+
+    - If the user asks a generic greeting/small‑talk, respond with a friendly chat reply.
+    - If the question is unrelated to any uploaded notice, refuse to answer.
+    - Otherwise (no sources for a PDF‑related query) return the standard NOT_FOUND_ANSWER.
+    """
+    question = state.get("question", "").strip().lower()
     sources = state.get("sources", [])
-    if sources:
-        return {"answer": sources[0].get("excerpt", NOT_FOUND_ANSWER)[:1200]}
+
+    # Simple greeting detection
+    greetings = [
+        "hi",
+        "hello",
+        "hey",
+        "hii",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "how are you",
+    ]
+    if any(question.startswith(g) for g in greetings):
+        return {"answer": "Hello! How can I assist you today?"}
+
+    if not sources:
+        # No sources and not a greeting → refuse to answer
+        return {"answer": "I couldn't find this information in the uploaded PDFs."}
+    # If sources exist but we fell back, keep the original behaviour (avoid repeating raw excerpt)
     return {"answer": NOT_FOUND_ANSWER}
 
 
